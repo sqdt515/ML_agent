@@ -107,8 +107,18 @@ fn merge_tool_call(target: &mut Vec<Value>, delta: &Value) {
     }
 }
 
-fn find_event_boundary(s: &str) -> Option<usize> {
-    s.find("\n\n").or_else(|| s.find("\r\n\r\n"))
+fn find_event_boundary(s: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i + 1 < s.len() {
+        if s[i] == b'\n' && s[i + 1] == b'\n' {
+            return Some(i);
+        }
+        if i + 3 < s.len() && &s[i..i + 4] == b"\r\n\r\n" {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 fn handle_event(event: &str, state: &mut SseState, channel: &Channel<ChatChunk>) -> Result<(), GatewayError> {
@@ -167,13 +177,13 @@ fn handle_event(event: &str, state: &mut SseState, channel: &Channel<ChatChunk>)
 }
 
 /// 增量处理 SSE 缓冲：每遇到一个完整事件（空行分隔）就解析并推送
-fn process_sse_buffer(buf: &mut String, state: &mut SseState, channel: &Channel<ChatChunk>) -> Result<(), GatewayError> {
+fn process_sse_buffer(buf: &mut Vec<u8>, state: &mut SseState, channel: &Channel<ChatChunk>) -> Result<(), GatewayError> {
     loop {
         let Some(boundary) = find_event_boundary(buf) else {
             return Ok(());
         };
-        let event = buf[..boundary].to_string();
-        let sep_len = if buf[boundary..].starts_with("\r\n\r\n") { 4 } else { 2 };
+        let sep_len = if buf[boundary..].starts_with(b"\r\n\r\n") { 4 } else { 2 };
+        let event = String::from_utf8_lossy(&buf[..boundary]).into_owned();
         buf.drain(..boundary + sep_len);
         handle_event(&event, state, channel)?;
     }
@@ -243,7 +253,7 @@ fn open_and_send(
         let _ = WinHttpSetTimeouts(request.0, 10000, 10000, 30000, 180000);
 
         let auth = format!("Authorization: Bearer {}\r\nContent-Type: application/json", config.api_key);
-        let headers: Vec<u16> = encode_w(&auth);
+        let headers: Vec<u16> = auth.encode_utf16().collect();
         WinHttpSendRequest(
             request.0,
             Some(&headers),
@@ -325,12 +335,14 @@ fn run_summarize(config: &AgentConfig, messages: Vec<Value>) -> Result<String, G
 fn map_winhttp_err(e: windows::core::Error) -> GatewayError {
     let raw = e.code().0 as u32;
     let low = raw & 0xFFFF;
-    // ERROR_WINHTTP_TIMEOUT(12002) 及各类连接/接收超时
-    if low == 12002 || (12030..=12043).contains(&low) {
-        GatewayError { code: "timeout", message: "请求超时，请检查网络或稍后重试".to_string() }
-    } else {
-        GatewayError { code: "network", message: format!("网络请求失败: {e}") }
-    }
+    // 保留真实错误码，便于区分超时/无法连接/连接重置等不同故障
+    let (code, message) = match low {
+        12002 => ("timeout", "请求超时，请检查网络或稍后重试".to_string()),
+        12029 => ("network", "无法连接到服务器，请检查网络".to_string()),
+        12030 | 12031 => ("network", "连接被重置，请检查网络代理或稍后重试".to_string()),
+        _ => ("network", format!("网络请求失败（错误码 {low}）: {e}")),
+    };
+    GatewayError { code, message }
 }
 
 fn map_http_status(status: u32, body: &str) -> GatewayError {
@@ -374,25 +386,45 @@ fn run_chat(
     let request = open_and_send(config, &endpoint, https, &host, port, &body)?;
 
     unsafe {
-        let mut raw = String::new();
+        let mut raw: Vec<u8> = Vec::new();
         let mut state = SseState::default();
+        let mut read_error: Option<GatewayError> = None;
+
         loop {
             let mut available: u32 = 0;
-            if WinHttpQueryDataAvailable(request.0, &mut available).is_err() || available == 0 {
+            if let Err(e) = WinHttpQueryDataAvailable(request.0, &mut available) {
+                read_error = Some(map_winhttp_err(e));
+                break;
+            }
+            if available == 0 {
                 break;
             }
             let mut buf = vec![0u8; available as usize];
             let mut read: u32 = 0;
-            let read_res = WinHttpReadData(request.0, buf.as_mut_ptr() as *mut core::ffi::c_void, buf.len() as u32, &mut read);
-            if read_res.is_err() || read == 0 {
+            if let Err(e) = WinHttpReadData(
+                request.0,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                buf.len() as u32,
+                &mut read,
+            ) {
+                read_error = Some(map_winhttp_err(e));
+                break;
+            }
+            if read == 0 {
                 break;
             }
             buf.truncate(read as usize);
-            raw.push_str(&String::from_utf8_lossy(&buf));
+            raw.extend_from_slice(&buf);
             process_sse_buffer(&mut raw, &mut state, channel)?;
             if state.done {
                 break;
             }
+        }
+
+        // 读循环因真实 WinHTTP 错误退出：透传具体原因
+        if let Some(err) = read_error {
+            let _ = channel.send(ChatChunk::Error { code: err.code.to_string(), message: err.message });
+            return Ok(());
         }
 
         let reason = state.finish_reason.unwrap_or_else(|| "stop".to_string());
@@ -406,12 +438,19 @@ fn run_chat(
             return Ok(());
         }
 
-        // 未收到 [DONE] 且没有任何有效内容：连接中断，报错
-        if !state.done && !state.saw_delta && state.tool_calls.is_empty() {
-            let _ = channel.send(ChatChunk::Error {
-                code: "network".to_string(),
-                message: "连接中断，未收到有效响应".to_string(),
-            });
+        // 未收到 [DONE]：连接中断。区分「完全没收到」与「半途截断」
+        if !state.done {
+            if !state.saw_delta && state.tool_calls.is_empty() {
+                let _ = channel.send(ChatChunk::Error {
+                    code: "network".to_string(),
+                    message: "连接中断，未收到有效响应".to_string(),
+                });
+            } else {
+                let _ = channel.send(ChatChunk::Error {
+                    code: "network".to_string(),
+                    message: "连接中断，回答不完整，请重试".to_string(),
+                });
+            }
             return Ok(());
         }
 
@@ -474,10 +513,10 @@ mod tests {
     fn parse_sse_delta_and_done() {
         let ch = channel();
         let mut state = SseState::default();
-        let mut buf = String::new();
-        buf.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"你好\"},\"index\":0}]}\n\n");
-        buf.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"世界\"},\"index\":0}]}\n\n");
-        buf.push_str("data: [DONE]\n\n");
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"content\":\"你好\"},\"index\":0}]}\n\n".as_bytes());
+        buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"content\":\"世界\"},\"index\":0}]}\n\n".as_bytes());
+        buf.extend_from_slice("data: [DONE]\n\n".as_bytes());
         process_sse_buffer(&mut buf, &mut state, &ch).unwrap();
         assert!(state.done);
         assert!(buf.is_empty());
@@ -487,11 +526,11 @@ mod tests {
     fn parse_sse_tool_calls_aggregation() {
         let ch = channel();
         let mut state = SseState::default();
-        let mut buf = String::new();
-        buf.push_str("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"get_time\",\"arguments\":\"\"}}]},\"index\":0}]}\n\n");
-        buf.push_str("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{}\"}}]},\"index\":0}]}\n\n");
-        buf.push_str("data: {\"choices\":[{\"finish_reason\":\"tool_calls\",\"index\":0}]}\n\n");
-        buf.push_str("data: [DONE]\n\n");
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"get_time\",\"arguments\":\"\"}}]},\"index\":0}]}\n\n".as_bytes());
+        buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{}\"}}]},\"index\":0}]}\n\n".as_bytes());
+        buf.extend_from_slice("data: {\"choices\":[{\"finish_reason\":\"tool_calls\",\"index\":0}]}\n\n".as_bytes());
+        buf.extend_from_slice("data: [DONE]\n\n".as_bytes());
         process_sse_buffer(&mut buf, &mut state, &ch).unwrap();
         assert_eq!(state.finish_reason.as_deref(), Some("tool_calls"));
         assert_eq!(state.tool_calls.len(), 1);
