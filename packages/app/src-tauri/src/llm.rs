@@ -241,7 +241,7 @@ fn open_and_send(
         let _ = WinHttpSetTimeouts(request.0, 10000, 10000, 30000, 180000);
 
         let auth = format!("Authorization: Bearer {}\r\nContent-Type: application/json", config.api_key);
-        let headers: Vec<u16> = auth.encode_utf16().collect();
+        let headers: Vec<u16> = encode_w(&auth);
         WinHttpSendRequest(
             request.0,
             Some(&headers),
