@@ -36,4 +36,5 @@ export const zh = {
   agentErrNoApiKey: '未配置 API Key，请先在设置中填写',
   agentToolCalling: '正在调用工具：',
   agentErrToolLoopLimit: '工具调用次数过多，已停止',
+  agentErrEmptyResponse: '模型返回了空响应，请重试',
 } as const

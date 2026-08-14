@@ -36,4 +36,5 @@ export const en = {
   agentErrNoApiKey: 'No API key configured. Set it in Settings first.',
   agentToolCalling: 'Calling tool: ',
   agentErrToolLoopLimit: 'Too many tool calls, stopped',
+  agentErrEmptyResponse: 'The model returned an empty response. Please try again.',
 } as const

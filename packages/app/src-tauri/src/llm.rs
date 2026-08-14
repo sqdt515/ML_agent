@@ -78,6 +78,7 @@ struct SseState {
     done: bool,
     finish_reason: Option<String>,
     tool_calls: Vec<Value>,
+    saw_delta: bool,
 }
 
 fn merge_tool_call(target: &mut Vec<Value>, delta: &Value) {
@@ -148,6 +149,7 @@ fn handle_event(event: &str, state: &mut SseState, channel: &Channel<ChatChunk>)
             if let Some(delta) = choice.get("delta") {
                 if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                     if !content.is_empty() {
+                        state.saw_delta = true;
                         channel
                             .send(ChatChunk::Delta { text: content.to_string() })
                             .map_err(|_| GatewayError { code: "aborted", message: "连接已中断".to_string() })?;
@@ -394,6 +396,25 @@ fn run_chat(
         }
 
         let reason = state.finish_reason.unwrap_or_else(|| "stop".to_string());
+
+        // 内容被安全策略过滤：明确报错而非静默结束
+        if reason == "content_filter" {
+            let _ = channel.send(ChatChunk::Error {
+                code: "content_filter".to_string(),
+                message: "内容被安全策略过滤，请调整后重试".to_string(),
+            });
+            return Ok(());
+        }
+
+        // 未收到 [DONE] 且没有任何有效内容：连接中断，报错
+        if !state.done && !state.saw_delta && state.tool_calls.is_empty() {
+            let _ = channel.send(ChatChunk::Error {
+                code: "network".to_string(),
+                message: "连接中断，未收到有效响应".to_string(),
+            });
+            return Ok(());
+        }
+
         let calls: Vec<Value> = state
             .tool_calls
             .into_iter()
