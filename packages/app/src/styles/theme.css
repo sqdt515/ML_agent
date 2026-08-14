@@ -1,0 +1,60 @@
+/* === 基础样式 === */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* === 主题变量（深色 - 默认） === */
+:root {
+  --bg-color: #0a0b18;
+  --panel-bg: rgba(18, 19, 31, 0.92);
+  --elevated-bg: #12131f;
+  --text-color: #e2e8f0;
+  --text-bright: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --active-bg: rgba(255, 255, 255, 0.1);
+  --accent-color: #6366f1;
+  --accent-text: #818cf8;
+  --accent-bg: rgba(99, 102, 241, 0.12);
+  --accent-border: rgba(99, 102, 241, 0.3);
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --scrollbar-color: rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
+}
+
+/* === 主题变量（浅色） === */
+.theme-light {
+  --bg-color: #f8fafc;
+  --panel-bg: rgba(255, 255, 255, 0.95);
+  --elevated-bg: #ffffff;
+  --text-color: #1e293b;
+  --text-bright: #0f172a;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --border-color: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.14);
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --active-bg: rgba(0, 0, 0, 0.08);
+  --accent-color: #6366f1;
+  --accent-text: #4f46e5;
+  --accent-bg: rgba(99, 102, 241, 0.08);
+  --accent-border: rgba(99, 102, 241, 0.35);
+  --input-bg: rgba(0, 0, 0, 0.03);
+  --shadow-color: rgba(0, 0, 0, 0.1);
+  --scrollbar-color: rgba(0, 0, 0, 0.12);
+  color-scheme: light;
+}

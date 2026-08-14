@@ -1,0 +1,21 @@
+{
+  "id": "default",
+  "name": "Default Pet",
+  "author": "New AI",
+  "format": "sprite",
+  "size": { "width": 48, "height": 48 },
+  "animations": {
+    "idle": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 24,
+        "frameHeight": 24,
+        "frameCount": 4,
+        "columns": 24,
+        "fps": 6,
+        "startFrame": 0
+      }
+    }
+  }
+}

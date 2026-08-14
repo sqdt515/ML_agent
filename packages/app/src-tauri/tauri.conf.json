@@ -1,0 +1,65 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "New AI",
+  "version": "0.1.0",
+  "identifier": "com.new-ai.app",
+  "build": {
+    "beforeDevCommand": "",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "pet",
+        "title": "New AI",
+        "width": 120,
+        "height": 120,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": false
+      },
+      {
+        "label": "social",
+        "title": "New AI 设置",
+        "width": 360,
+        "height": 440,
+        "transparent": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "resizable": false,
+        "maximizable": false,
+        "visible": false,
+        "url": "index.html"
+      },
+            {
+        "label": "agent",
+        "title": "New AI Agent",
+        "width": 420,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 480,
+        "transparent": false,
+        "decorations": false,
+        "visible": false,
+        "resizable": true,
+        "maximizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'"
+    },
+    "trayIcon": null
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}

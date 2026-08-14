@@ -1,0 +1,75 @@
+---
+// 首页
+import Base from '../layouts/Base.astro'
+---
+
+<Base title="New AI - 桌面宠物应用">
+  <!-- 首页主区块 -->
+  <main class="hero">
+    <div class="hero__card">
+      <h1 class="hero__title">New AI</h1>
+      <p class="hero__subtitle">基于 Tauri 2 + Vue 3 的桌面宠物应用</p>
+      <!-- 下载占位按钮 -->
+      <a class="hero__cta" href="#">下载</a>
+    </div>
+  </main>
+</Base>
+
+<style>
+  /* 渐变背景 + 卡片样式 */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+  }
+
+  /* 卡片容器 */
+  .hero__card {
+    max-width: 32rem;
+    width: 100%;
+    text-align: center;
+    padding: 3rem 2rem;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 1rem;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+    backdrop-filter: blur(10px);
+  }
+
+  /* 主标题 */
+  .hero__title {
+    margin: 0 0 0.5rem;
+    font-size: 3rem;
+    font-weight: 700;
+    color: #1f2937;
+    letter-spacing: -0.02em;
+  }
+
+  /* 副标题 */
+  .hero__subtitle {
+    margin: 0 0 2rem;
+    font-size: 1.125rem;
+    color: #6b7280;
+  }
+
+  /* 下载按钮 */
+  .hero__cta {
+    display: inline-block;
+    padding: 0.75rem 2.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #ffffff;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    border-radius: 0.5rem;
+    text-decoration: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  /* 悬停效果 */
+  .hero__cta:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(99, 102, 241, 0.4);
+  }
+</style>

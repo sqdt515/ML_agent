@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+packages/app/src-tauri/target/
+
+# Site
+packages/site/.astro/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# macOS
+.DS_Store
+
+# Rust
+*.pdb
+
+# Tauri auto-generated schemas
+packages/app/src-tauri/gen/schemas/
+
+# Logs
+*.log
+
+# Env
+.env
+.env.local
+
+*.local.*
+
+# 临时缓存目录（沙箱环境生成）
+.corepack/
+.pnpm-store/
+.pnpm-cache/
+.tmp/
+.local/
+.appdata/
