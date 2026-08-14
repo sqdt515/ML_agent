@@ -73,6 +73,14 @@ impl Drop for HandleGuard {
     }
 }
 
+/// 同时持有 session/connect/request 三个句柄，保证读取期间父句柄不被提前关闭。
+/// WinHTTP 的 request 依赖 connect、connect 依赖 session；父句柄被 close 会导致读操作返回 12017（操作取消）。
+struct WinHttpHandles {
+    _session: HandleGuard,
+    _connect: HandleGuard,
+    request: HandleGuard,
+}
+
 #[derive(Default)]
 struct SseState {
     done: bool,
@@ -219,7 +227,7 @@ fn open_and_send(
     host: &str,
     port: u16,
     body: &[u8],
-) -> Result<HandleGuard, GatewayError> {
+) -> Result<WinHttpHandles, GatewayError> {
     unsafe {
         let session = WinHttpOpen(PCWSTR::null(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, PCWSTR::null(), PCWSTR::null(), 0);
         if session.is_null() {
@@ -281,7 +289,7 @@ fn open_and_send(
             let err_body = read_all(request.0);
             return Err(map_http_status(status, &err_body));
         }
-        Ok(request)
+        Ok(WinHttpHandles { _session: session, _connect: connect, request })
     }
 }
 
@@ -327,8 +335,8 @@ fn run_summarize(config: &AgentConfig, messages: Vec<Value>) -> Result<String, G
     payload["messages"] = json!(msgs);
 
     let body = serde_json::to_vec(&payload).map_err(|e| GatewayError { code: "bad_request", message: e.to_string() })?;
-    let request = open_and_send(config, &endpoint, https, &host, port, &body)?;
-    let raw = read_all(request.0);
+    let handles = open_and_send(config, &endpoint, https, &host, port, &body)?;
+    let raw = read_all(handles.request.0);
     extract_content(&raw)
 }
 
@@ -383,7 +391,7 @@ fn run_chat(
     }
     let body = serde_json::to_vec(&payload).map_err(|e| GatewayError { code: "bad_request", message: e.to_string() })?;
 
-    let request = open_and_send(config, &endpoint, https, &host, port, &body)?;
+    let handles = open_and_send(config, &endpoint, https, &host, port, &body)?;
 
     unsafe {
         let mut raw: Vec<u8> = Vec::new();
@@ -392,7 +400,7 @@ fn run_chat(
 
         loop {
             let mut available: u32 = 0;
-            if let Err(e) = WinHttpQueryDataAvailable(request.0, &mut available) {
+            if let Err(e) = WinHttpQueryDataAvailable(handles.request.0, &mut available) {
                 read_error = Some(map_winhttp_err(e));
                 break;
             }
@@ -402,7 +410,7 @@ fn run_chat(
             let mut buf = vec![0u8; available as usize];
             let mut read: u32 = 0;
             if let Err(e) = WinHttpReadData(
-                request.0,
+                handles.request.0,
                 buf.as_mut_ptr() as *mut core::ffi::c_void,
                 buf.len() as u32,
                 &mut read,
