@@ -87,8 +87,8 @@ if (isSettingsWindow && currentWindow) {
       await currentWindow.hide()
     })
   })
-} else {
-  // pet 窗口专属：动态调整窗口大小
+} else if (!isAgentWindow) {
+  // pet 窗口专属：动态调整窗口大小（agent 窗口尺寸由 tauri.conf.json 控制，不在此 resize）
   useWindowSize(windowWidth, windowHeight)
 
   // 加载皮肤清单
@@ -138,7 +138,8 @@ if (isSettingsWindow && currentWindow) {
       :title="t('settings')"
       :aria-label="t('settings')"
       @mousedown.stop
-      @click.stop="openSettings"`n      @dblclick.stop
+      @click.stop="openSettings"
+      @dblclick.stop
     >
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="3"></circle>
