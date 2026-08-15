@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_notification::NotificationExt;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::WIN32_ERROR;
 use windows::Win32::System::Registry::{
@@ -205,6 +206,99 @@ pub fn agent_tool_note_create(app: AppHandle, text: String) -> Result<String, St
 pub fn agent_tool_note_list(app: AppHandle) -> Result<String, String> {
     let notes = load_notes(&app);
     ok_json(serde_json::json!({ "ok": true, "notes": notes }))
+}
+
+// === 文件系统（只读，低危） ===
+
+#[tauri::command]
+pub fn agent_tool_fs_list(dir: String) -> Result<String, String> {
+    let path = std::path::Path::new(dir.trim());
+    if path.as_os_str().is_empty() {
+        return Err("目录不能为空".to_string());
+    }
+    let entries = std::fs::read_dir(path).map_err(|e| format!("读取目录失败: {e}"))?;
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let size = if is_dir {
+            None
+        } else {
+            entry.metadata().ok().map(|m| m.len())
+        };
+        items.push(serde_json::json!({ "name": name, "is_dir": is_dir, "size": size }));
+    }
+    items.sort_by(|a, b| {
+        let ad = a["is_dir"].as_bool().unwrap_or(false);
+        let bd = b["is_dir"].as_bool().unwrap_or(false);
+        bd.cmp(&ad).then_with(|| {
+            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+        })
+    });
+    let total = items.len();
+    if items.len() > 200 {
+        items.truncate(200);
+    }
+    ok_json(serde_json::json!({ "ok": true, "path": dir, "count": total, "items": items }))
+}
+
+#[tauri::command]
+pub fn agent_tool_fs_read(path: String) -> Result<String, String> {
+    let p = std::path::Path::new(path.trim());
+    if p.as_os_str().is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    let meta = std::fs::metadata(p).map_err(|e| format!("读取文件失败: {e}"))?;
+    if meta.is_dir() {
+        return Err("目标是目录，请改用列目录工具".to_string());
+    }
+    const MAX_BYTES: u64 = 1024 * 1024;
+    if meta.len() > MAX_BYTES {
+        return Err(format!(
+            "文件过大（{} 字节），仅支持 ≤1MB 的文本文件",
+            meta.len()
+        ));
+    }
+    let content =
+        std::fs::read_to_string(p).map_err(|e| format!("读取失败（可能非 UTF-8 文本）: {e}"))?;
+    const MAX_CHARS: usize = 8000;
+    let truncated = content.chars().count() > MAX_CHARS;
+    let display: String = content.chars().take(MAX_CHARS).collect();
+    ok_json(serde_json::json!({ "ok": true, "path": path, "size": meta.len(), "truncated": truncated, "content": display }))
+}
+
+// === 系统通知 ===
+
+#[tauri::command]
+pub fn agent_tool_notify(app: AppHandle, text: String) -> Result<String, String> {
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("通知内容不能为空".to_string());
+    }
+    app.notification()
+        .builder()
+        .title("New AI")
+        .body(&trimmed)
+        .show()
+        .map_err(|e| format!("发送通知失败: {e}"))?;
+    ok_json(serde_json::json!({ "ok": true, "result": "通知已发送" }))
+}
+
+// === 剪贴板 ===
+
+#[tauri::command]
+pub fn agent_tool_clipboard_read() -> Result<String, String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| format!("打开剪贴板失败: {e}"))?;
+    let text = cb.get_text().map_err(|e| format!("读取剪贴板失败: {e}"))?;
+    ok_json(serde_json::json!({ "ok": true, "text": text }))
+}
+
+#[tauri::command]
+pub fn agent_tool_clipboard_write(text: String) -> Result<String, String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| format!("打开剪贴板失败: {e}"))?;
+    cb.set_text(text.clone())
+        .map_err(|e| format!("写入剪贴板失败: {e}"))?;
+    ok_json(serde_json::json!({ "ok": true, "result": "已写入剪贴板" }))
 }
 
 #[cfg(test)]

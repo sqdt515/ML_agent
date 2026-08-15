@@ -136,6 +136,56 @@ export const agentTools: AgentTool[] = [
     parameters: emptyParams,
     executor: async () => invokeTool('agent_tool_note_list'),
   },
+  {
+    name: 'fs_list',
+    description: '列出指定目录下的文件和子目录（只读，目录优先排序，最多 200 项）',
+    parameters: {
+      type: 'object',
+      properties: { dir: { type: 'string', description: '要列出的目录路径' } },
+      required: ['dir'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_fs_list', { dir: String(args.dir ?? '') }),
+  },
+  {
+    name: 'fs_read',
+    description: '读取一个文本文件的内容（只读，仅支持 ≤1MB 的 UTF-8 文本文件）',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string', description: '要读取的文件完整路径' } },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_fs_read', { path: String(args.path ?? '') }),
+  },
+  {
+    name: 'notify',
+    description: '发送一条系统桌面通知',
+    parameters: {
+      type: 'object',
+      properties: { text: { type: 'string', description: '通知内容' } },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_notify', { text: String(args.text ?? '') }),
+  },
+  {
+    name: 'clipboard_read',
+    description: '读取系统剪贴板中的文本内容',
+    parameters: emptyParams,
+    executor: async () => invokeTool('agent_tool_clipboard_read'),
+  },
+  {
+    name: 'clipboard_write',
+    description: '将文本写入系统剪贴板',
+    parameters: {
+      type: 'object',
+      properties: { text: { type: 'string', description: '要写入剪贴板的文本' } },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_clipboard_write', { text: String(args.text ?? '') }),
+  },
 ]
 
 export function toolsToPayload(tools: AgentTool[]): Array<Record<string, unknown>> {

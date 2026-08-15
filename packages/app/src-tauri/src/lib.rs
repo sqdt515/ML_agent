@@ -13,6 +13,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::agent_app_exit,
             agent_config::agent_get_config,
@@ -26,6 +27,11 @@ pub fn run() {
             agent_tools::agent_tool_get_time,
             agent_tools::agent_tool_note_create,
             agent_tools::agent_tool_note_list,
+            agent_tools::agent_tool_fs_list,
+            agent_tools::agent_tool_fs_read,
+            agent_tools::agent_tool_notify,
+            agent_tools::agent_tool_clipboard_read,
+            agent_tools::agent_tool_clipboard_write,
         ])
         .setup(|app| {
             println!("New AI started");
