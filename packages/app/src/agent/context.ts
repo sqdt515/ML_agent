@@ -1,4 +1,4 @@
-import type { ChatMessage } from './types'
+import type { ChatMessage, AgentPlan } from './types'
 import { estimateTokens } from './token'
 
 export interface BuildContextResult {
@@ -13,7 +13,9 @@ export interface BuildContextResult {
 /** 组装系统提示词（附加工具开关与省略提示） */
 export function buildSystemPrompt(base: string, toolEnabled: boolean, dropped: number): string {
   let prompt = base.trim()
-  if (!toolEnabled) {
+  if (toolEnabled) {
+    prompt += '\n\n（自治执行协议：接到需要多步完成的任务时，先调用 create_plan 制定计划；执行过程中用 update_step 更新每步状态；全部完成后调用 finish 总结。简单问题可直接回答，不必规划。）'
+  } else {
     prompt += '\n\n（当前已关闭工具调用，请只进行对话，不要请求使用工具。）'
   }
   if (dropped > 0) {
@@ -48,4 +50,32 @@ export function buildContext(messages: ChatMessage[], budget: number): BuildCont
   }
 
   return { messages: [...systemMsgs, ...kept], dropped, droppedMessages: droppedMsgs }
+}
+
+const STEP_ICON: Record<string, string> = {
+  pending: '·',
+  in_progress: '▶',
+  completed: '✓',
+  blocked: '⚠',
+}
+
+/** 把当前执行计划序列化为给模型看的结构化文本，注入下一轮上下文 */
+export function buildPlanContext(plan: AgentPlan | undefined): string | null {
+  if (!plan || plan.steps.length === 0) return null
+  const lines: string[] = []
+  for (const st of plan.steps) {
+    let line = '  ' + (STEP_ICON[st.status] ?? '·') + ' [' + st.status + '] ' + st.title
+    if (st.note) line += '（' + st.note + '）'
+    lines.push(line)
+  }
+  const sep = '\n'
+  return (
+    '当前任务计划（目标：' +
+    plan.goal +
+    '）：' +
+    sep +
+    lines.join(sep) +
+    sep +
+    '请继续按计划推进：开始某步前标 in_progress，完成后标 completed，遇到障碍标 blocked 并说明原因、必要时调整策略，全部完成调用 finish。'
+  )
 }

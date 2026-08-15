@@ -8,6 +8,8 @@ export interface AgentConfigInput {
   systemPrompt?: string
   toolEnabled?: boolean
   contextBudget?: number
+  maxAgentRounds?: number
+  planMode?: boolean
 }
 
 export async function loadConfig(): Promise<AgentConfig> {

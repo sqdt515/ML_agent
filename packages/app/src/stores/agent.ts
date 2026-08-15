@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ChatMessage, ChatSession, AgentConfig, ToolCall, ChatRole } from '@/agent/types'
-import { TOOL_LOOP_LIMIT } from '@/agent/types'
-import { buildContext, buildSystemPrompt } from '@/agent/context'
-import { agentTools, toolsToPayload, findTool } from '@/agent/tools'
+import type { ChatMessage, ChatSession, AgentConfig, ToolCall, ChatRole, AgentStep, AgentStepStatus } from '@/agent/types'
+import { MAX_AGENT_ROUNDS } from '@/agent/types'
+import { buildContext, buildSystemPrompt, buildPlanContext } from '@/agent/context'
+import { agentTools, toolsToPayload, findTool, isMetaTool } from '@/agent/tools'
 import { createChatChannel, streamChat, toOpenAIMessages } from '@/agent/engine'
 import { invoke } from '@tauri-apps/api/core'
 import { loadConfig } from '@/agent/config'
@@ -38,6 +38,8 @@ export const useAgentStore = defineStore('agent', () => {
   const toolStatus = ref<string | null>(null)
   const error = ref<string | null>(null)
   const stopRequested = ref(false)
+  /** 计划已产出、等待用户确认后再继续执行（plan_mode 开启时） */
+  const awaitingPlanConfirm = ref(false)
 
   const current = computed(() => sessions.value.find((s) => s.id === currentId.value) ?? null)
   const messages = computed(() => current.value?.messages ?? [])
@@ -172,6 +174,65 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
 
+  function parseToolArgs(tc: ToolCall): Record<string, unknown> {
+    try {
+      return tc.function.arguments ? (JSON.parse(tc.function.arguments) as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** 执行元工具：更新会话的 plan 状态（不发到 Rust），返回给模型的结果文本 */
+  function handleMetaTool(sessionId: string, tc: ToolCall): string {
+    const s = sessions.value.find((x) => x.id === sessionId)
+    if (!s) return JSON.stringify({ ok: false, error: '会话不存在' })
+    const args = parseToolArgs(tc)
+    const name = tc.function.name
+
+    if (name === 'create_plan') {
+      const goal = String(args.goal ?? '')
+      const rawSteps = Array.isArray(args.steps) ? (args.steps as Array<Record<string, unknown>>) : []
+      const steps: AgentStep[] = rawSteps
+        .map((st, i) => ({
+          id: typeof st.id === 'string' ? st.id : 'step_' + (i + 1),
+          title: typeof st.title === 'string' ? st.title : '',
+          status: 'pending' as AgentStepStatus,
+        }))
+        .filter((st) => st.title)
+      s.plan = { goal, steps, status: 'active' }
+      persist()
+      if (config.value?.planMode) {
+        awaitingPlanConfirm.value = true
+      }
+      return JSON.stringify({ ok: true, result: '已创建计划：' + goal + '（' + steps.length + ' 步）' })
+    }
+
+    if (name === 'update_step') {
+      if (!s.plan) return JSON.stringify({ ok: false, error: '尚未创建计划' })
+      const sid = String(args.step_id ?? '')
+      const status = String(args.status ?? 'in_progress') as AgentStepStatus
+      const step = s.plan.steps.find((x) => x.id === sid)
+      if (!step) return JSON.stringify({ ok: false, error: '未知步骤 ' + sid })
+      step.status = status
+      if (args.note != null) step.note = String(args.note)
+      persist()
+      return JSON.stringify({ ok: true, result: '步骤 ' + sid + ' 已更新为 ' + status })
+    }
+
+    if (name === 'finish') {
+      if (s.plan) {
+        s.plan.status = 'done'
+        for (const st of s.plan.steps) {
+          if (st.status !== 'completed') st.status = 'completed'
+        }
+      }
+      persist()
+      return JSON.stringify({ ok: true, result: '任务完成：' + String(args.summary ?? '') })
+    }
+
+    return JSON.stringify({ ok: false, error: '未知元工具 ' + name })
+  }
+
   async function runAgentLoop(sessionId: string, assistantId: string): Promise<void> {
     const cfg = config.value
     if (!cfg) {
@@ -184,11 +245,12 @@ export const useAgentStore = defineStore('agent', () => {
     }
 
     const tools = cfg.toolEnabled ? toolsToPayload(agentTools) : []
+    const maxRounds = cfg.maxAgentRounds || MAX_AGENT_ROUNDS
     const getSession = (): ChatSession | null => sessions.value.find((x) => x.id === sessionId) ?? null
 
     let curAssistantId = assistantId
 
-    for (let round = 0; round < TOOL_LOOP_LIMIT; round++) {
+    for (let round = 0; round < maxRounds; round++) {
       if (stopRequested.value) break
 
       const s = getSession()
@@ -227,8 +289,10 @@ export const useAgentStore = defineStore('agent', () => {
 
       const { messages: ctx, dropped } = buildContext(msgs, cfg.contextBudget)
       const system = buildSystemPrompt(cfg.systemPrompt, cfg.toolEnabled, dropped)
+      const planCtx = buildPlanContext(s.plan)
       const all: ChatMessage[] = [
         { id: genId('m'), role: 'system', content: system, createdAt: now() },
+        ...(planCtx ? [{ id: genId('m'), role: 'system', content: planCtx, createdAt: now() } as ChatMessage] : []),
         ...ctx,
       ]
 
@@ -260,7 +324,7 @@ export const useAgentStore = defineStore('agent', () => {
 
       if (finishReason !== 'tool_calls' || toolCalls.length === 0) break
 
-      if (round === TOOL_LOOP_LIMIT - 1) {
+      if (round === maxRounds - 1) {
         // 最后一轮仍要调工具：超限，移除未执行工具的 assistant 占位
         const s2 = getSession()
         if (s2) {
@@ -281,18 +345,16 @@ export const useAgentStore = defineStore('agent', () => {
 
       const results = await Promise.all(
         toolCalls.map(async (tc) => {
-          const tool = findTool(tc.function.name)
           let content: string
-          if (!tool) {
-            content = JSON.stringify({ ok: false, error: `未知工具 ${tc.function.name}` })
+          if (isMetaTool(tc.function.name)) {
+            content = handleMetaTool(sessionId, tc)
           } else {
-            let args: Record<string, unknown> = {}
-            try {
-              args = tc.function.arguments ? (JSON.parse(tc.function.arguments) as Record<string, unknown>) : {}
-            } catch {
-              /* noop */
+            const tool = findTool(tc.function.name)
+            if (!tool) {
+              content = JSON.stringify({ ok: false, error: `未知工具 ${tc.function.name}` })
+            } else {
+              content = await tool.executor(parseToolArgs(tc))
             }
-            content = await tool.executor(args)
           }
           return { call: tc, content }
         }),
@@ -310,6 +372,10 @@ export const useAgentStore = defineStore('agent', () => {
         })
       }
       toolStatus.value = null
+      // plan_mode 开启且刚产出计划：暂停，等待用户确认后再继续
+      if (awaitingPlanConfirm.value) {
+        break
+      }
       const newAssistantId = genId('m')
       s3.messages.push({ id: newAssistantId, role: 'assistant', content: '', createdAt: now() })
       s3.updatedAt = now()
@@ -331,34 +397,56 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  async function send(text: string): Promise<void> {
-    const s = current.value
-    if (!s || streaming.value || !text.trim()) return
-    error.value = null
-    stopRequested.value = false
-    toolStatus.value = null
+  async function execute(sessionId: string, assistantId: string): Promise<void> {
     streaming.value = true
-    const sessionId = s.id
-    await reloadConfig()
-    if (!config.value) {
-      error.value = t('agentErrConfigNotLoaded')
-      streaming.value = false
-      return
-    }
-    if (!config.value.apiKeySet) {
-      error.value = t('agentErrNoApiKey')
-      streaming.value = false
-      return
-    }
-    pushMessageTo(sessionId, { id: genId('m'), role: 'user', content: text.trim(), createdAt: now() })
-    const assistantId = genId('m')
-    pushMessageTo(sessionId, { id: assistantId, role: 'assistant', content: '', createdAt: now() })
     try {
       await runAgentLoop(sessionId, assistantId)
     } finally {
       streaming.value = false
       toolStatus.value = null
       stopRequested.value = false
+    }
+  }
+
+  async function send(text: string): Promise<void> {
+    const s = current.value
+    if (!s || streaming.value || !text.trim()) return
+    error.value = null
+    stopRequested.value = false
+    toolStatus.value = null
+    const sessionId = s.id
+    await reloadConfig()
+    if (!config.value) {
+      error.value = t('agentErrConfigNotLoaded')
+      return
+    }
+    if (!config.value.apiKeySet) {
+      error.value = t('agentErrNoApiKey')
+      return
+    }
+    pushMessageTo(sessionId, { id: genId('m'), role: 'user', content: text.trim(), createdAt: now() })
+    const assistantId = genId('m')
+    pushMessageTo(sessionId, { id: assistantId, role: 'assistant', content: '', createdAt: now() })
+    await execute(sessionId, assistantId)
+  }
+
+  function confirmPlan(): void {
+    if (!awaitingPlanConfirm.value) return
+    awaitingPlanConfirm.value = false
+    const s = current.value
+    if (!s) return
+    const assistantId = genId('m')
+    pushMessageTo(s.id, { id: assistantId, role: 'assistant', content: '', createdAt: now() })
+    void execute(s.id, assistantId)
+  }
+
+  function cancelPlan(): void {
+    if (!awaitingPlanConfirm.value) return
+    awaitingPlanConfirm.value = false
+    const s = current.value
+    if (s && s.plan) {
+      s.plan.status = 'cancelled'
+      persist()
     }
   }
 
@@ -375,6 +463,7 @@ export const useAgentStore = defineStore('agent', () => {
     streaming,
     toolStatus,
     error,
+    awaitingPlanConfirm,
     init,
     reloadConfig,
     newChat,
@@ -383,5 +472,7 @@ export const useAgentStore = defineStore('agent', () => {
     removeSession,
     send,
     stop,
+    confirmPlan,
+    cancelPlan,
   }
 })

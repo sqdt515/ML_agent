@@ -31,6 +31,8 @@ export interface ChatSession {
   messages: ChatMessage[]
   /** 是否已把早期超预算消息压缩为摘要 */
   summarized?: boolean
+  /** 自治执行计划（层次 A：规划 + 任务追踪） */
+  plan?: AgentPlan
 }
 
 // === 流式分片（与后端 ChatChunk 对应） ===
@@ -62,6 +64,28 @@ export interface AgentConfig {
   systemPrompt: string
   toolEnabled: boolean
   contextBudget: number
+  maxAgentRounds: number
+  planMode: boolean
 }
+
+// === 自治执行计划（层次 A） ===
+
+export type AgentStepStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
+
+export interface AgentStep {
+  id: string
+  title: string
+  status: AgentStepStatus
+  note?: string
+}
+
+export interface AgentPlan {
+  goal: string
+  steps: AgentStep[]
+  status: 'active' | 'done' | 'cancelled'
+}
+
+/** 自治循环默认上限（后端配置 maxAgentRounds 可覆盖） */
+export const MAX_AGENT_ROUNDS = 20
 
 export const TOOL_LOOP_LIMIT = 5

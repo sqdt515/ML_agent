@@ -7,6 +7,71 @@ export interface AgentTool {
   executor: (args: Record<string, unknown>) => Promise<string>
 }
 
+/** 元工具：只定义 schema，执行由 store 拦截（更新 plan 状态，不发到 Rust） */
+export interface MetaTool {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export const metaTools: MetaTool[] = [
+  {
+    name: 'create_plan',
+    description: '为当前任务创建一个分步执行计划。接到需要多步完成的任务时，应先调用本工具产出计划。',
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string', description: '任务目标的简短描述' },
+        steps: {
+          type: 'array',
+          description: '有序的执行步骤列表',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: '步骤唯一标识' },
+              title: { type: 'string', description: '步骤描述' },
+            },
+            required: ['id', 'title'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['goal', 'steps'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'update_step',
+    description: '更新执行计划中某一步的状态（进行中/已完成/受阻）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        step_id: { type: 'string', description: '步骤 id' },
+        status: { type: 'string', enum: ['in_progress', 'completed', 'blocked'], description: '新状态' },
+        note: { type: 'string', description: '可选备注，如受阻原因' },
+      },
+      required: ['step_id', 'status'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'finish',
+    description: '宣布任务全部完成，附上简洁总结。',
+    parameters: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: '完成总结' },
+      },
+      required: ['summary'],
+      additionalProperties: false,
+    },
+  },
+]
+
+export function isMetaTool(name: string): boolean {
+  return metaTools.some((t) => t.name === name)
+}
+
 async function invokeTool<T>(cmd: string, args: Record<string, unknown> = {}): Promise<string> {
   try {
     const res = await invoke<T>(cmd, args)
@@ -74,7 +139,11 @@ export const agentTools: AgentTool[] = [
 ]
 
 export function toolsToPayload(tools: AgentTool[]): Array<Record<string, unknown>> {
-  return tools.map((t) => ({
+  const schemas: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [
+    ...tools,
+    ...metaTools,
+  ]
+  return schemas.map((t) => ({
     type: 'function',
     function: { name: t.name, description: t.description, parameters: t.parameters },
   }))

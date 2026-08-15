@@ -13,6 +13,7 @@ const draft = ref('')
 const listRef = ref<HTMLElement | null>(null)
 
 const showStop = computed(() => agent.streaming)
+const currentPlan = computed(() => agent.current?.plan ?? null)
 const streamLen = computed(() => {
   const msgs = agent.messages
   const last = msgs[msgs.length - 1]
@@ -26,6 +27,24 @@ async function scrollToBottom(): Promise<void> {
 }
 
 watch([() => agent.messages.length, streamLen], scrollToBottom)
+
+const stepIcons: Record<string, string> = {
+  pending: '⏳',
+  in_progress: '🔄',
+  completed: '✅',
+  blocked: '⚠️',
+}
+
+function stepIcon(status: string): string {
+  return stepIcons[status] ?? '·'
+}
+
+function stepStatusLabel(status: string): string {
+  if (status === 'in_progress') return t('planStepInProgress')
+  if (status === 'completed') return t('planStepCompleted')
+  if (status === 'blocked') return t('planStepBlocked')
+  return t('planStepPending')
+}
 
 onMounted(() => {
   void agent.init()
@@ -89,6 +108,25 @@ function exitApp(): void {
       </select>
       <button class="ghost-btn" @click="agent.newChat()">{{ t('newChat') }}</button>
       <button class="ghost-btn" @click="agent.clearChat()">{{ t('clear') }}</button>
+    </div>
+
+    <div v-if="currentPlan && currentPlan.steps.length" class="plan-panel">
+      <div class="plan-header">
+        <span class="plan-title">{{ t('planTitle') }}</span>
+        <span class="plan-goal">{{ t('planGoal') }}：{{ currentPlan.goal }}</span>
+      </div>
+      <div class="plan-steps">
+        <div v-for="st in currentPlan.steps" :key="st.id" class="plan-step" :class="st.status">
+          <span class="plan-step-icon">{{ stepIcon(st.status) }}</span>
+          <span class="plan-step-title">{{ st.title }}</span>
+          <span class="plan-step-status">{{ stepStatusLabel(st.status) }}</span>
+          <span v-if="st.note" class="plan-step-note">{{ st.note }}</span>
+        </div>
+      </div>
+      <div v-if="agent.awaitingPlanConfirm" class="plan-actions">
+        <button class="ghost-btn" @click="agent.cancelPlan()">{{ t('planCancel') }}</button>
+        <button class="plan-confirm-btn" @click="agent.confirmPlan()">{{ t('planConfirm') }}</button>
+      </div>
     </div>
 
     <div ref="listRef" class="message-list">
@@ -259,6 +297,110 @@ function exitApp(): void {
 .ghost-btn:hover {
   background: var(--hover-bg);
   color: var(--text-bright);
+}
+
+/* === 计划面板 === */
+.plan-panel {
+  flex-shrink: 0;
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  background: var(--elevated-bg);
+}
+
+.plan-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.plan-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+.plan-goal {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.plan-step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-color);
+}
+
+.plan-step-icon {
+  flex-shrink: 0;
+}
+
+.plan-step-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-step-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.plan-step.completed .plan-step-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.plan-step.blocked .plan-step-title {
+  color: #e5484d;
+}
+
+.plan-step-note {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.plan-confirm-btn {
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.plan-confirm-btn:hover {
+  opacity: 0.9;
 }
 
 /* === 消息列表 === */

@@ -32,6 +32,8 @@ const model = ref('deepseek-chat')
 const systemPrompt = ref('')
 const toolEnabled = ref(true)
 const contextBudget = ref(24000)
+const maxAgentRounds = ref(20)
+const planMode = ref(true)
 const saving = ref(false)
 const savedHint = ref(false)
 
@@ -59,6 +61,8 @@ async function loadAgentConfig() {
     systemPrompt.value = cfg.systemPrompt
     toolEnabled.value = cfg.toolEnabled
     contextBudget.value = cfg.contextBudget
+    maxAgentRounds.value = cfg.maxAgentRounds
+    planMode.value = cfg.planMode
   } catch {
     /* noop */
   }
@@ -76,6 +80,8 @@ async function saveAgentConfig() {
       systemPrompt: systemPrompt.value,
       toolEnabled: toolEnabled.value,
       contextBudget: contextBudget.value,
+      maxAgentRounds: maxAgentRounds.value,
+      planMode: planMode.value,
     })
     apiKey.value = ''
     apiKeySet.value = cfg.apiKeySet
@@ -188,6 +194,26 @@ onMounted(() => {
             class="text-input"
           />
         </label>
+
+        <label class="field">
+          <span class="field-label">{{ t('maxAgentRounds') }}</span>
+          <input
+            v-model.number="maxAgentRounds"
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            class="text-input"
+          />
+        </label>
+
+        <div class="field row">
+          <span class="field-label">{{ t('planMode') }}</span>
+          <label class="switch">
+            <input v-model="planMode" type="checkbox" />
+            <span class="slider"></span>
+          </label>
+        </div>
 
         <div class="form-actions">
           <button class="save-btn" :disabled="saving" @click="saveAgentConfig">

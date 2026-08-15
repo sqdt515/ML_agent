@@ -7,6 +7,7 @@ const DEFAULT_MODEL: &str = "deepseek-chat";
 const DEFAULT_CONTEXT_BUDGET: u32 = 24000;
 const MIN_BUDGET: u32 = 4000;
 const MAX_BUDGET: u32 = 60000;
+const DEFAULT_MAX_AGENT_ROUNDS: u32 = 20;
 
 const DEFAULT_SYSTEM_PROMPT: &str = "你是 New AI，一个运行在用户桌面上的智能助手。\
 你的特点是：亲切、简洁、准确。\
@@ -24,6 +25,8 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub tool_enabled: bool,
     pub context_budget: u32,
+    pub max_agent_rounds: u32,
+    pub plan_mode: bool,
 }
 
 impl Default for AgentConfig {
@@ -35,6 +38,8 @@ impl Default for AgentConfig {
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             tool_enabled: true,
             context_budget: DEFAULT_CONTEXT_BUDGET,
+            max_agent_rounds: DEFAULT_MAX_AGENT_ROUNDS,
+            plan_mode: true,
         }
     }
 }
@@ -76,6 +81,8 @@ pub struct AgentConfigView {
     pub system_prompt: String,
     pub tool_enabled: bool,
     pub context_budget: u32,
+    pub max_agent_rounds: u32,
+    pub plan_mode: bool,
 }
 
 /// 前端提交的配置（可选字段，None 表示保持原值；api_key 为空字符串表示不修改）
@@ -88,6 +95,8 @@ pub struct AgentConfigInput {
     pub system_prompt: Option<String>,
     pub tool_enabled: Option<bool>,
     pub context_budget: Option<u32>,
+    pub max_agent_rounds: Option<u32>,
+    pub plan_mode: Option<bool>,
 }
 
 pub fn view(config: &AgentConfig) -> AgentConfigView {
@@ -104,6 +113,8 @@ pub fn view(config: &AgentConfig) -> AgentConfigView {
         system_prompt: config.system_prompt.clone(),
         tool_enabled: config.tool_enabled,
         context_budget: config.context_budget,
+        max_agent_rounds: config.max_agent_rounds,
+        plan_mode: config.plan_mode,
     }
 }
 
@@ -136,6 +147,12 @@ pub fn apply(app: &AppHandle, input: AgentConfigInput) -> Result<AgentConfigView
     if let Some(budget) = input.context_budget {
         config.context_budget = budget.clamp(MIN_BUDGET, MAX_BUDGET);
     }
+    if let Some(rounds) = input.max_agent_rounds {
+        config.max_agent_rounds = rounds.clamp(1, 100);
+    }
+    if let Some(plan_mode) = input.plan_mode {
+        config.plan_mode = plan_mode;
+    }
     config.save(app)?;
     Ok(view(&config))
 }
@@ -165,6 +182,8 @@ mod tests {
         assert_eq!(c.model, "deepseek-chat");
         assert!(c.tool_enabled);
         assert_eq!(c.context_budget, 24000);
+        assert_eq!(c.max_agent_rounds, 20);
+        assert!(c.plan_mode);
     }
 
     #[test]
