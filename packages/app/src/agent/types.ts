@@ -82,7 +82,7 @@ export interface AgentStep {
 export interface AgentPlan {
   goal: string
   steps: AgentStep[]
-  status: 'active' | 'done' | 'cancelled'
+  status: 'awaiting_confirm' | 'active' | 'done' | 'cancelled'
 }
 
 /** 自治循环默认上限（后端配置 maxAgentRounds 可覆盖） */

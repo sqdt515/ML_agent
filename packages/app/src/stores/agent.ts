@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ChatMessage, ChatSession, AgentConfig, ToolCall, ChatRole, AgentStep, AgentStepStatus } from '@/agent/types'
+import type { ChatMessage, ChatSession, AgentConfig, ToolCall, ChatRole, AgentStep, AgentStepStatus, AgentPlan } from '@/agent/types'
 import { MAX_AGENT_ROUNDS } from '@/agent/types'
 import { buildContext, buildSystemPrompt, buildPlanContext } from '@/agent/context'
 import { agentTools, toolsToPayload, findTool, isMetaTool } from '@/agent/tools'
@@ -25,6 +25,35 @@ function now(): number {
   return Date.now()
 }
 
+const VALID_STEP_STATUSES = ['pending', 'in_progress', 'completed', 'blocked'] as const
+const VALID_PLAN_STATUSES = ['awaiting_confirm', 'active', 'done', 'cancelled'] as const
+
+/** 从 localStorage 恢复 plan（含状态校验，兼容非法/缺失字段） */
+function parseStoredPlan(raw: unknown): AgentPlan | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const p = raw as Record<string, unknown>
+  const goal = typeof p.goal === 'string' ? p.goal : ''
+  const stepsRaw = Array.isArray(p.steps) ? p.steps : []
+  const steps: AgentStep[] = stepsRaw
+    .filter((st) => st && typeof st === 'object' && typeof (st as Record<string, unknown>).title === 'string')
+    .map((st, i) => {
+      const o = st as Record<string, unknown>
+      return {
+        id: typeof o.id === 'string' ? o.id : 'step_' + (i + 1),
+        title: String(o.title),
+        status: (VALID_STEP_STATUSES as readonly string[]).includes(String(o.status))
+          ? (o.status as AgentStepStatus)
+          : 'pending',
+        note: typeof o.note === 'string' ? o.note : undefined,
+      }
+    })
+  if (steps.length === 0) return undefined
+  const status = (VALID_PLAN_STATUSES as readonly string[]).includes(String(p.status))
+    ? (p.status as AgentPlan['status'])
+    : 'active'
+  return { goal, steps, status }
+}
+
 /** 调用后端非流式摘要命令，把最旧消息压缩为一条摘要文本 */
 async function summarizeMessages(messages: ChatMessage[]): Promise<string> {
   return invoke<string>('agent_summarize', { messages: toOpenAIMessages(messages) })
@@ -38,8 +67,6 @@ export const useAgentStore = defineStore('agent', () => {
   const toolStatus = ref<string | null>(null)
   const error = ref<string | null>(null)
   const stopRequested = ref(false)
-  /** 计划已产出、等待用户确认后再继续执行（plan_mode 开启时） */
-  const awaitingPlanConfirm = ref(false)
 
   const current = computed(() => sessions.value.find((s) => s.id === currentId.value) ?? null)
   const messages = computed(() => current.value?.messages ?? [])
@@ -82,6 +109,7 @@ export const useAgentStore = defineStore('agent', () => {
               toolCalls: Array.isArray(m.toolCalls) ? (m.toolCalls as ToolCall[]) : undefined,
               createdAt: typeof m.createdAt === 'number' ? m.createdAt : now(),
             })),
+          plan: parseStoredPlan(s.plan),
         }))
     } catch {
       /* noop */
@@ -199,18 +227,23 @@ export const useAgentStore = defineStore('agent', () => {
           status: 'pending' as AgentStepStatus,
         }))
         .filter((st) => st.title)
-      s.plan = { goal, steps, status: 'active' }
-      persist()
-      if (config.value?.planMode) {
-        awaitingPlanConfirm.value = true
+      if (steps.length === 0) {
+        return JSON.stringify({ ok: false, error: '计划步骤为空，请至少提供一个步骤' })
       }
+      const planStatus: AgentPlan['status'] = config.value?.planMode ? 'awaiting_confirm' : 'active'
+      s.plan = { goal, steps, status: planStatus }
+      persist()
       return JSON.stringify({ ok: true, result: '已创建计划：' + goal + '（' + steps.length + ' 步）' })
     }
 
     if (name === 'update_step') {
       if (!s.plan) return JSON.stringify({ ok: false, error: '尚未创建计划' })
       const sid = String(args.step_id ?? '')
-      const status = String(args.status ?? 'in_progress') as AgentStepStatus
+      const rawStatus = String(args.status ?? 'in_progress')
+      if (!(VALID_STEP_STATUSES as readonly string[]).includes(rawStatus)) {
+        return JSON.stringify({ ok: false, error: '非法步骤状态 ' + rawStatus })
+      }
+      const status = rawStatus as AgentStepStatus
       const step = s.plan.steps.find((x) => x.id === sid)
       if (!step) return JSON.stringify({ ok: false, error: '未知步骤 ' + sid })
       step.status = status
@@ -223,7 +256,9 @@ export const useAgentStore = defineStore('agent', () => {
       if (s.plan) {
         s.plan.status = 'done'
         for (const st of s.plan.steps) {
-          if (st.status !== 'completed') st.status = 'completed'
+          if (st.status === 'pending' || st.status === 'in_progress') {
+            st.status = 'completed'
+          }
         }
       }
       persist()
@@ -343,24 +378,47 @@ export const useAgentStore = defineStore('agent', () => {
       })
       toolStatus.value = t('agentToolCalling') + toolCalls.map((tc) => tc.function.name).join(', ')
 
-      const results = await Promise.all(
-        toolCalls.map(async (tc) => {
-          let content: string
-          if (isMetaTool(tc.function.name)) {
-            content = handleMetaTool(sessionId, tc)
-          } else {
-            const tool = findTool(tc.function.name)
-            if (!tool) {
-              content = JSON.stringify({ ok: false, error: `未知工具 ${tc.function.name}` })
-            } else {
-              content = await tool.executor(parseToolArgs(tc))
-            }
-          }
-          return { call: tc, content }
-        }),
+      const metaCalls = toolCalls.filter((tc) => isMetaTool(tc.function.name))
+      const realCalls = toolCalls.filter((tc) => !isMetaTool(tc.function.name))
+
+      // 先执行元工具（可能让 plan 进入 awaiting_confirm）
+      const metaResults = await Promise.all(
+        metaCalls.map(async (tc) => ({ call: tc, content: handleMetaTool(sessionId, tc) })),
       )
+
       const s3 = getSession()
       if (!s3) break
+
+      // 计划进入待确认：只回填元工具结果，丢弃未执行的实工具调用，暂停等待确认
+      if (s3.plan?.status === 'awaiting_confirm') {
+        updateMessage(sessionId, curAssistantId, (m) => {
+          if (m.role === 'assistant') m.toolCalls = metaCalls
+        })
+        for (const r of metaResults) {
+          s3.messages.push({
+            id: genId('m'),
+            role: 'tool',
+            toolCallId: r.call.id,
+            toolName: r.call.function.name,
+            content: r.content,
+            createdAt: now(),
+          })
+        }
+        toolStatus.value = null
+        break
+      }
+
+      // 执行实工具并回填全部结果
+      const realResults = await Promise.all(
+        realCalls.map(async (tc) => {
+          const tool = findTool(tc.function.name)
+          if (!tool) {
+            return { call: tc, content: JSON.stringify({ ok: false, error: `未知工具 ${tc.function.name}` }) }
+          }
+          return { call: tc, content: await tool.executor(parseToolArgs(tc)) }
+        }),
+      )
+      const results = [...metaResults, ...realResults]
       for (const r of results) {
         s3.messages.push({
           id: genId('m'),
@@ -372,10 +430,6 @@ export const useAgentStore = defineStore('agent', () => {
         })
       }
       toolStatus.value = null
-      // plan_mode 开启且刚产出计划：暂停，等待用户确认后再继续
-      if (awaitingPlanConfirm.value) {
-        break
-      }
       const newAssistantId = genId('m')
       s3.messages.push({ id: newAssistantId, role: 'assistant', content: '', createdAt: now() })
       s3.updatedAt = now()
@@ -411,6 +465,10 @@ export const useAgentStore = defineStore('agent', () => {
   async function send(text: string): Promise<void> {
     const s = current.value
     if (!s || streaming.value || !text.trim()) return
+    // 新消息打断当前会话待确认的计划
+    if (s.plan?.status === 'awaiting_confirm') {
+      s.plan.status = 'cancelled'
+    }
     error.value = null
     stopRequested.value = false
     toolStatus.value = null
@@ -431,23 +489,20 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function confirmPlan(): void {
-    if (!awaitingPlanConfirm.value) return
-    awaitingPlanConfirm.value = false
     const s = current.value
-    if (!s) return
+    if (!s?.plan || s.plan.status !== 'awaiting_confirm') return
+    s.plan.status = 'active'
+    persist()
     const assistantId = genId('m')
     pushMessageTo(s.id, { id: assistantId, role: 'assistant', content: '', createdAt: now() })
     void execute(s.id, assistantId)
   }
 
   function cancelPlan(): void {
-    if (!awaitingPlanConfirm.value) return
-    awaitingPlanConfirm.value = false
     const s = current.value
-    if (s && s.plan) {
-      s.plan.status = 'cancelled'
-      persist()
-    }
+    if (!s?.plan || s.plan.status !== 'awaiting_confirm') return
+    s.plan.status = 'cancelled'
+    persist()
   }
 
   function stop(): void {
@@ -463,7 +518,6 @@ export const useAgentStore = defineStore('agent', () => {
     streaming,
     toolStatus,
     error,
-    awaitingPlanConfirm,
     init,
     reloadConfig,
     newChat,

@@ -123,7 +123,7 @@ function exitApp(): void {
           <span v-if="st.note" class="plan-step-note">{{ st.note }}</span>
         </div>
       </div>
-      <div v-if="agent.awaitingPlanConfirm" class="plan-actions">
+      <div v-if="currentPlan?.status === 'awaiting_confirm'" class="plan-actions">
         <button class="ghost-btn" @click="agent.cancelPlan()">{{ t('planCancel') }}</button>
         <button class="plan-confirm-btn" @click="agent.confirmPlan()">{{ t('planConfirm') }}</button>
       </div>
