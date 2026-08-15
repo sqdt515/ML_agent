@@ -11,10 +11,14 @@ export interface BuildContextResult {
 }
 
 /** 组装系统提示词（附加工具开关与省略提示） */
-export function buildSystemPrompt(base: string, toolEnabled: boolean, dropped: number): string {
+export function buildSystemPrompt(base: string, toolEnabled: boolean, planMode: boolean, dropped: number): string {
   let prompt = base.trim()
   if (toolEnabled) {
-    prompt += '\n\n（自治执行协议：接到需要多步完成的任务时，先调用 create_plan 制定计划；执行过程中用 update_step 更新每步状态；全部完成后调用 finish 总结。简单问题可直接回答，不必规划。）'
+    if (planMode) {
+      prompt += '\n\n（自治执行协议：涉及工具调用的任务，必须先调用 create_plan 制定分步计划并等待用户确认，得到确认后再逐步执行。执行每步前用 update_step 标记 in_progress、完成后标记 completed、遇到障碍标记 blocked；全部完成后调用 finish。严禁在 create_plan 之前直接调用其他工具。）'
+    } else {
+      prompt += '\n\n（自治执行协议：需要多步完成的任务可先调用 create_plan 制定计划跟踪进度；执行中用 update_step 更新每步状态；全部完成后调用 finish 总结。简单问题可直接回答。）'
+    }
   } else {
     prompt += '\n\n（当前已关闭工具调用，请只进行对话，不要请求使用工具。）'
   }

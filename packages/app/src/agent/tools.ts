@@ -17,7 +17,7 @@ export interface MetaTool {
 export const metaTools: MetaTool[] = [
   {
     name: 'create_plan',
-    description: '为当前任务创建一个分步执行计划。接到需要多步完成的任务时，应先调用本工具产出计划。',
+    description: '为当前任务创建分步执行计划。任何需要调用多个工具或包含多个步骤的任务，都必须先调用本工具制定计划，等待用户确认后再执行其他工具。',
     parameters: {
       type: 'object',
       properties: {

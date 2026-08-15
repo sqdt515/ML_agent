@@ -323,7 +323,7 @@ export const useAgentStore = defineStore('agent', () => {
       }
 
       const { messages: ctx, dropped } = buildContext(msgs, cfg.contextBudget)
-      const system = buildSystemPrompt(cfg.systemPrompt, cfg.toolEnabled, dropped)
+      const system = buildSystemPrompt(cfg.systemPrompt, cfg.toolEnabled, cfg.planMode, dropped)
       const planCtx = buildPlanContext(s.plan)
       const all: ChatMessage[] = [
         { id: genId('m'), role: 'system', content: system, createdAt: now() },
