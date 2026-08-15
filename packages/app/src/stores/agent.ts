@@ -378,6 +378,28 @@ export const useAgentStore = defineStore('agent', () => {
       })
       toolStatus.value = t('agentToolCalling') + toolCalls.map((tc) => tc.function.name).join(', ')
 
+      // 计划确认模式兜底：会话尚无计划且本轮未先 create_plan，强制拦截所有工具，要求先规划
+      const s0 = getSession()
+      if (s0 && cfg.planMode && !s0.plan && !toolCalls.some((tc) => tc.function.name === 'create_plan')) {
+        for (const tc of toolCalls) {
+          s0.messages.push({
+            id: genId('m'),
+            role: 'tool',
+            toolCallId: tc.id,
+            toolName: tc.function.name,
+            content: JSON.stringify({ ok: false, error: '计划确认模式已开启：请先调用 create_plan 制定分步计划，经用户确认后再执行其他工具。' }),
+            createdAt: now(),
+          })
+        }
+        toolStatus.value = null
+        const newAssistantId = genId('m')
+        s0.messages.push({ id: newAssistantId, role: 'assistant', content: '', createdAt: now() })
+        s0.updatedAt = now()
+        persist()
+        curAssistantId = newAssistantId
+        continue
+      }
+
       const metaCalls = toolCalls.filter((tc) => isMetaTool(tc.function.name))
       const realCalls = toolCalls.filter((tc) => !isMetaTool(tc.function.name))
 
