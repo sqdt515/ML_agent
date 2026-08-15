@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.new-ai.app",
   "build": {
-    "beforeDevCommand": "",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
