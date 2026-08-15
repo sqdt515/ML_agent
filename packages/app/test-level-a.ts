@@ -16,7 +16,7 @@ function eq(name: string, actual: unknown, expected: unknown): void {
 
 // ===== tools.ts =====
 const payload = toolsToPayload(agentTools)
-check('toolsToPayload 总数 = 10 (7实+3元)', payload.length === 10, 'actual=' + payload.length)
+check('toolsToPayload 总数 = 15 (12实+3元)', payload.length === 15, 'actual=' + payload.length)
 check('toolsToPayload 元素均含 type=function', payload.every((p) => (p as any).type === 'function'))
 const names = payload.map((p) => (p as any).function.name as string)
 check('含元工具 create_plan', names.includes('create_plan'))
@@ -24,6 +24,11 @@ check('含元工具 update_step', names.includes('update_step'))
 check('含元工具 finish', names.includes('finish'))
 check('含实工具 open_url', names.includes('open_url'))
 check('含实工具 system_info', names.includes('system_info'))
+check('含实工具 fs_list', names.includes('fs_list'))
+check('含实工具 fs_read', names.includes('fs_read'))
+check('含实工具 notify', names.includes('notify'))
+check('含实工具 clipboard_read', names.includes('clipboard_read'))
+check('含实工具 clipboard_write', names.includes('clipboard_write'))
 
 check('isMetaTool(create_plan)=true', isMetaTool('create_plan'))
 check('isMetaTool(update_step)=true', isMetaTool('update_step'))
@@ -44,6 +49,18 @@ eq('update_step status enum', (us.parameters as any).properties.status.enum, ['i
 
 const fn = metaTools.find((t) => t.name === 'finish')!
 check('finish required 含 summary', (fn.parameters as any).required.includes('summary'))
+
+// ===== 层次 B M3 工具 schema =====
+const fl = agentTools.find((t) => t.name === 'fs_list')!
+check('fs_list required 含 dir', (fl.parameters as any).required.includes('dir'))
+const fr = agentTools.find((t) => t.name === 'fs_read')!
+check('fs_read required 含 path', (fr.parameters as any).required.includes('path'))
+const nt = agentTools.find((t) => t.name === 'notify')!
+check('notify required 含 text', (nt.parameters as any).required.includes('text'))
+const cw = agentTools.find((t) => t.name === 'clipboard_write')!
+check('clipboard_write required 含 text', (cw.parameters as any).required.includes('text'))
+const cr = agentTools.find((t) => t.name === 'clipboard_read')!
+check('clipboard_read 无参数', (cr.parameters as any).type === 'object')
 
 // ===== context.ts =====
 check('buildPlanContext(undefined)=null', buildPlanContext(undefined) === null)

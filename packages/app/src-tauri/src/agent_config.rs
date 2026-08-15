@@ -203,4 +203,33 @@ mod tests {
         assert_eq!(100u32.clamp(MIN_BUDGET, MAX_BUDGET), MIN_BUDGET);
         assert_eq!(99999u32.clamp(MIN_BUDGET, MAX_BUDGET), MAX_BUDGET);
     }
+
+    #[test]
+    fn apply_clamps_rounds() {
+        // max_agent_rounds 的 clamp(1, 100) 边界
+        assert_eq!(0u32.clamp(1, 100), 1);
+        assert_eq!(1000u32.clamp(1, 100), 100);
+        assert_eq!(50u32.clamp(1, 100), 50);
+    }
+
+    #[test]
+    fn view_serializes_camel_case() {
+        let c = AgentConfig::default();
+        let v = view(&c);
+        let raw = serde_json::to_string(&v).unwrap();
+        assert!(raw.contains("\"maxAgentRounds\""));
+        assert!(raw.contains("\"planMode\""));
+        assert!(raw.contains("\"apiKeySet\""));
+        assert!(!raw.contains("max_agent_rounds"));
+        assert!(!raw.contains("plan_mode"));
+    }
+
+    #[test]
+    fn input_deserializes_camel_case() {
+        let raw = r#"{"maxAgentRounds":7,"planMode":false,"contextBudget":9999}"#;
+        let input: AgentConfigInput = serde_json::from_str(raw).unwrap();
+        assert_eq!(input.max_agent_rounds, Some(7));
+        assert_eq!(input.plan_mode, Some(false));
+        assert_eq!(input.context_budget, Some(9999));
+    }
 }

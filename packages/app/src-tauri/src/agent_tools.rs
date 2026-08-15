@@ -321,4 +321,116 @@ mod tests {
         assert_eq!(format_iso(86399), "1970-01-01T23:59:59");
         assert_eq!(format_iso(86400), "1970-01-02T00:00:00");
     }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "newai_{}_{}_{}",
+            name,
+            std::process::id(),
+            now_secs()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn fs_list_sorts_dirs_first_then_name() {
+        let base = temp_dir("fslist");
+        std::fs::create_dir_all(base.join("subdir")).unwrap();
+        std::fs::write(base.join("b.txt"), "bbb").unwrap();
+        std::fs::write(base.join("a.txt"), "aaa").unwrap();
+
+        let res = agent_tool_fs_list(base.to_string_lossy().to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(v["ok"], true);
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items[0]["name"], "subdir");
+        assert_eq!(items[0]["is_dir"], true);
+        let files: Vec<&str> = items
+            .iter()
+            .filter(|i| i["is_dir"] == false)
+            .map(|i| i["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(files, vec!["a.txt", "b.txt"]);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn fs_list_empty_dir_errors() {
+        assert!(agent_tool_fs_list("   ".to_string()).is_err());
+    }
+
+    #[test]
+    fn fs_list_nonexistent_dir_errors() {
+        assert!(agent_tool_fs_list("Z:/nonexistent_xyz_12345".to_string()).is_err());
+    }
+
+    #[test]
+    fn fs_list_truncates_at_200() {
+        let base = temp_dir("fslist200");
+        for i in 0..205 {
+            std::fs::write(base.join(format!("f{i:03}.txt")), "x").unwrap();
+        }
+        let res = agent_tool_fs_list(base.to_string_lossy().to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(v["count"], 205);
+        assert_eq!(v["items"].as_array().unwrap().len(), 200);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn fs_read_roundtrip() {
+        let base = temp_dir("fsread");
+        let file = base.join("hello.txt");
+        std::fs::write(&file, "你好，世界").unwrap();
+        let res = agent_tool_fs_read(file.to_string_lossy().to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["content"], "你好，世界");
+        assert_eq!(v["truncated"], false);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn fs_read_empty_path_errors() {
+        assert!(agent_tool_fs_read("   ".to_string()).is_err());
+    }
+
+    #[test]
+    fn fs_read_dir_errors() {
+        let base = std::env::temp_dir();
+        assert!(agent_tool_fs_read(base.to_string_lossy().to_string()).is_err());
+    }
+
+    #[test]
+    fn fs_read_large_file_errors() {
+        let base = temp_dir("fsreadbig");
+        let file = base.join("big.bin");
+        let data = vec![b'a'; 1024 * 1024 + 1];
+        std::fs::write(&file, &data).unwrap();
+        assert!(agent_tool_fs_read(file.to_string_lossy().to_string()).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn fs_read_non_utf8_errors() {
+        let base = temp_dir("fsreadbin");
+        let file = base.join("bad.bin");
+        std::fs::write(&file, [0xff, 0xfe, 0x00, 0x80]).unwrap();
+        assert!(agent_tool_fs_read(file.to_string_lossy().to_string()).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn fs_read_truncates_long_content() {
+        let base = temp_dir("fsreadlong");
+        let file = base.join("long.txt");
+        std::fs::write(&file, "a".repeat(9000)).unwrap();
+        let res = agent_tool_fs_read(file.to_string_lossy().to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(v["truncated"], true);
+        assert_eq!(v["content"].as_str().unwrap().chars().count(), 8000);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }
