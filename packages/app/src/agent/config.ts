@@ -11,6 +11,7 @@ export interface AgentConfigInput {
   maxAgentRounds?: number
   planMode?: boolean
   execEnabled?: boolean
+  webSearchKey?: string
 }
 
 export async function loadConfig(): Promise<AgentConfig> {

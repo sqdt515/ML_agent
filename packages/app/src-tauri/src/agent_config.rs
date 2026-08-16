@@ -28,6 +28,7 @@ pub struct AgentConfig {
     pub max_agent_rounds: u32,
     pub plan_mode: bool,
     pub exec_enabled: bool,
+    pub web_search_key: String,
 }
 
 impl Default for AgentConfig {
@@ -42,6 +43,7 @@ impl Default for AgentConfig {
             max_agent_rounds: DEFAULT_MAX_AGENT_ROUNDS,
             plan_mode: true,
             exec_enabled: false,
+            web_search_key: String::new(),
         }
     }
 }
@@ -86,6 +88,8 @@ pub struct AgentConfigView {
     pub max_agent_rounds: u32,
     pub plan_mode: bool,
     pub exec_enabled: bool,
+    pub web_search_key_set: bool,
+    pub web_search_key_last4: String,
 }
 
 /// 前端提交的配置（可选字段，None 表示保持原值；api_key 为空字符串表示不修改）
@@ -101,17 +105,21 @@ pub struct AgentConfigInput {
     pub max_agent_rounds: Option<u32>,
     pub plan_mode: Option<bool>,
     pub exec_enabled: Option<bool>,
+    pub web_search_key: Option<String>,
+}
+
+fn last4(s: &str) -> String {
+    if s.len() >= 4 {
+        s[s.len() - 4..].to_string()
+    } else {
+        String::new()
+    }
 }
 
 pub fn view(config: &AgentConfig) -> AgentConfigView {
-    let last4 = if config.api_key.len() >= 4 {
-        config.api_key[config.api_key.len() - 4..].to_string()
-    } else {
-        String::new()
-    };
     AgentConfigView {
         api_key_set: !config.api_key.is_empty(),
-        api_key_last4: last4,
+        api_key_last4: last4(&config.api_key),
         base_url: config.base_url.clone(),
         model: config.model.clone(),
         system_prompt: config.system_prompt.clone(),
@@ -120,6 +128,8 @@ pub fn view(config: &AgentConfig) -> AgentConfigView {
         max_agent_rounds: config.max_agent_rounds,
         plan_mode: config.plan_mode,
         exec_enabled: config.exec_enabled,
+        web_search_key_set: !config.web_search_key.is_empty(),
+        web_search_key_last4: last4(&config.web_search_key),
     }
 }
 
@@ -161,6 +171,12 @@ pub fn apply(app: &AppHandle, input: AgentConfigInput) -> Result<AgentConfigView
     if let Some(exec_enabled) = input.exec_enabled {
         config.exec_enabled = exec_enabled;
     }
+    if let Some(key) = input.web_search_key {
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            config.web_search_key = trimmed.to_string();
+        }
+    }
     config.save(app)?;
     Ok(view(&config))
 }
@@ -193,6 +209,7 @@ mod tests {
         assert_eq!(c.max_agent_rounds, 20);
         assert!(c.plan_mode);
         assert!(!c.exec_enabled);
+        assert!(c.web_search_key.is_empty());
     }
 
     #[test]
@@ -203,6 +220,16 @@ mod tests {
         assert!(v.api_key_set);
         assert_eq!(v.api_key_last4, "3456");
         assert!(!v.api_key_last4.contains("abcdef"));
+    }
+
+    #[test]
+    fn view_masks_web_search_key() {
+        let mut c = AgentConfig::default();
+        c.web_search_key = "tvly-dev-abcdef123456".to_string();
+        let v = view(&c);
+        assert!(v.web_search_key_set);
+        assert_eq!(v.web_search_key_last4, "3456");
+        assert!(!v.web_search_key_last4.contains("abcdef"));
     }
 
     #[test]
@@ -228,6 +255,7 @@ mod tests {
         assert!(raw.contains("\"maxAgentRounds\""));
         assert!(raw.contains("\"planMode\""));
         assert!(raw.contains("\"execEnabled\""));
+        assert!(raw.contains("\"webSearchKeySet\""));
         assert!(raw.contains("\"apiKeySet\""));
         assert!(!raw.contains("max_agent_rounds"));
         assert!(!raw.contains("plan_mode"));

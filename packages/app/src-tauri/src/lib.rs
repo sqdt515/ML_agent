@@ -35,6 +35,7 @@ pub fn run() {
             agent_tools::agent_tool_fs_write,
             agent_tools::agent_tool_fs_delete,
             agent_tools::agent_tool_exec,
+            agent_tools::agent_tool_web_search,
         ])
         .setup(|app| {
             println!("New AI started");

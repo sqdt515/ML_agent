@@ -44,6 +44,7 @@ export const zh = {
   planMode: '计划确认',
   execEnabled: '启用命令执行',
   execEnabledWarning: '⚠️ 允许 AI 执行系统命令，可能带来安全风险（如删除文件、修改系统）。请谨慎开启。',
+  webSearchKey: '联网搜索 Key',
   agentErrConfigNotLoaded: 'Agent 配置未加载',
   agentErrNoApiKey: '未配置 API Key，请先在设置中填写',
   agentToolCalling: '正在调用工具：',

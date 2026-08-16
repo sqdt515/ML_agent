@@ -35,12 +35,20 @@ const contextBudget = ref(24000)
 const maxAgentRounds = ref(20)
 const planMode = ref(true)
 const execEnabled = ref(false)
+const webSearchKey = ref('')
+const webSearchKeySet = ref(false)
+const webSearchKeyLast4 = ref('')
 const saving = ref(false)
 const savedHint = ref(false)
 
 const modelOptions = ['deepseek-chat', 'deepseek-reasoner']
 const apiKeyPlaceholder = computed(() =>
   apiKeySet.value ? `sk-...（已配置 ****${apiKeyLast4.value}，留空不修改）` : 'sk-...',
+)
+const webSearchKeyPlaceholder = computed(() =>
+  webSearchKeySet.value
+    ? `tvly-...（已配置 ****${webSearchKeyLast4.value}，留空不修改）`
+    : 'tvly-...（Tavily）',
 )
 
 function selectLocale(l: Locale) {
@@ -65,6 +73,8 @@ async function loadAgentConfig() {
     maxAgentRounds.value = cfg.maxAgentRounds
     planMode.value = cfg.planMode
     execEnabled.value = cfg.execEnabled
+    webSearchKeySet.value = cfg.webSearchKeySet
+    webSearchKeyLast4.value = cfg.webSearchKeyLast4
   } catch {
     /* noop */
   }
@@ -85,10 +95,14 @@ async function saveAgentConfig() {
       maxAgentRounds: maxAgentRounds.value,
       planMode: planMode.value,
       execEnabled: execEnabled.value,
+      webSearchKey: webSearchKey.value.trim() || undefined,
     })
     apiKey.value = ''
+    webSearchKey.value = ''
     apiKeySet.value = cfg.apiKeySet
     apiKeyLast4.value = cfg.apiKeyLast4
+    webSearchKeySet.value = cfg.webSearchKeySet
+    webSearchKeyLast4.value = cfg.webSearchKeyLast4
     savedHint.value = true
     setTimeout(() => {
       savedHint.value = false
@@ -151,6 +165,18 @@ onMounted(() => {
             type="password"
             class="text-input"
             :placeholder="apiKeyPlaceholder"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+
+        <label class="field">
+          <span class="field-label">{{ t('webSearchKey') }}</span>
+          <input
+            v-model="webSearchKey"
+            type="password"
+            class="text-input"
+            :placeholder="webSearchKeyPlaceholder"
             autocomplete="off"
             spellcheck="false"
           />

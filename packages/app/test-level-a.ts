@@ -16,9 +16,11 @@ function eq(name: string, actual: unknown, expected: unknown): void {
 
 // ===== tools.ts =====
 const payload = toolsToPayload(agentTools)
-check('toolsToPayload 默认总数 = 17 (14实+3元, 不含exec)', payload.length === 17, 'actual=' + payload.length)
+check('toolsToPayload 默认总数 = 17 (14实+3元, 不含exec/web_search)', payload.length === 17, 'actual=' + payload.length)
 const payloadWithExec = toolsToPayload(agentTools, true)
-check('toolsToPayload(execEnabled=true) 总数 = 18', payloadWithExec.length === 18, 'actual=' + payloadWithExec.length)
+check('toolsToPayload(execEnabled=true) 总数 = 18 (含exec不含web_search)', payloadWithExec.length === 18, 'actual=' + payloadWithExec.length)
+const payloadWithWebSearch = toolsToPayload(agentTools, true, true)
+check('toolsToPayload(exec+web_search=true) 总数 = 19', payloadWithWebSearch.length === 19, 'actual=' + payloadWithWebSearch.length)
 check('toolsToPayload 元素均含 type=function', payload.every((p) => (p as any).type === 'function'))
 const names = payload.map((p) => (p as any).function.name as string)
 check('含元工具 create_plan', names.includes('create_plan'))
@@ -34,8 +36,12 @@ check('含实工具 clipboard_write', names.includes('clipboard_write'))
 check('含实工具 fs_write', names.includes('fs_write'))
 check('含实工具 fs_delete', names.includes('fs_delete'))
 check('默认 payload 不含 exec', !names.includes('exec'))
+check('默认 payload 不含 web_search', !names.includes('web_search'))
 const namesWithExec = payloadWithExec.map((p) => (p as any).function.name as string)
 check('execEnabled=true 含 exec', namesWithExec.includes('exec'))
+check('execEnabled=true 不含 web_search', !namesWithExec.includes('web_search'))
+const namesWithWebSearch = payloadWithWebSearch.map((p) => (p as any).function.name as string)
+check('exec+web_search=true 含 web_search', namesWithWebSearch.includes('web_search'))
 
 check('isMetaTool(create_plan)=true', isMetaTool('create_plan'))
 check('isMetaTool(update_step)=true', isMetaTool('update_step'))
@@ -76,6 +82,10 @@ const ex = agentTools.find((t) => t.name === 'exec')!
 check('exec required 含 cmd', (ex.parameters as any).required.includes('cmd'))
 check('findTool(exec, false)=undefined', findTool('exec', false) === undefined)
 check('findTool(exec, true)=exec', findTool('exec', true) === ex)
+const wsTool = agentTools.find((t) => t.name === 'web_search')!
+check('web_search required 含 query', (wsTool.parameters as any).required.includes('query'))
+check('findTool(web_search, true, false)=undefined', findTool('web_search', true, false) === undefined)
+check('findTool(web_search, true, true)=web_search', findTool('web_search', true, true) === wsTool)
 
 // ===== context.ts =====
 check('buildPlanContext(undefined)=null', buildPlanContext(undefined) === null)

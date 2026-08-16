@@ -67,6 +67,8 @@ export interface AgentConfig {
   maxAgentRounds: number
   planMode: boolean
   execEnabled: boolean
+  webSearchKeySet: boolean
+  webSearchKeyLast4: string
 }
 
 // === 自治执行计划（层次 A） ===

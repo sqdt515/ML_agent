@@ -4,6 +4,12 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::WIN32_ERROR;
+use windows::Win32::Networking::WinHttp::{
+    WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
+    WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
+    WinHttpSetTimeouts, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_FLAG_SECURE,
+    WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
+};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
     REG_VALUE_TYPE,
@@ -21,6 +27,14 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() > max {
+        s.chars().take(max).collect()
+    } else {
+        s.to_string()
+    }
 }
 
 // === 桌宠控制 ===
@@ -468,6 +482,164 @@ pub fn agent_tool_exec(cmd: String) -> Result<String, String> {
         "stderr": stderr_disp,
         "stdout_truncated": so_trunc,
         "stderr_truncated": se_trunc,
+    }))
+}
+
+// === 联网搜索（Tavily） ===
+
+/// 调用 Tavily Search API，返回响应体 JSON 字符串
+fn tavily_post(body_json: &str) -> Result<String, String> {
+    const HOST: &str = "api.tavily.com";
+    const PORT: u16 = 443;
+    const PATH: &str = "/search";
+    unsafe {
+        let session = WinHttpOpen(
+            PCWSTR::null(),
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            0,
+        );
+        if session.is_null() {
+            return Err("WinHttpOpen 失败".to_string());
+        }
+        let server = encode_w(HOST);
+        let connect = WinHttpConnect(session, PCWSTR(server.as_ptr()), PORT, 0);
+        if connect.is_null() {
+            let _ = WinHttpCloseHandle(session);
+            return Err("WinHttpConnect 失败".to_string());
+        }
+        let verb = encode_w("POST");
+        let object = encode_w(PATH);
+        let request = WinHttpOpenRequest(
+            connect,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(object.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            std::ptr::null(),
+            WINHTTP_FLAG_SECURE,
+        );
+        if request.is_null() {
+            let _ = WinHttpCloseHandle(connect);
+            let _ = WinHttpCloseHandle(session);
+            return Err("WinHttpOpenRequest 失败".to_string());
+        }
+        let _ = WinHttpSetTimeouts(request, 10000, 10000, 30000, 30000);
+        let headers: Vec<u16> = "Content-Type: application/json".encode_utf16().collect();
+        let body = body_json.as_bytes();
+        WinHttpSendRequest(
+            request,
+            Some(&headers),
+            Some(body.as_ptr() as *const core::ffi::c_void),
+            body.len() as u32,
+            body.len() as u32,
+            0,
+        )
+        .map_err(|e| format!("发送请求失败: {e}"))?;
+        WinHttpReceiveResponse(request, std::ptr::null_mut())
+            .map_err(|e| format!("接收响应失败: {e}"))?;
+
+        let mut status: u32 = 0;
+        let mut status_len: u32 = std::mem::size_of::<u32>() as u32;
+        let mut index: u32 = 0;
+        WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            PCWSTR::null(),
+            Some(&mut status as *mut u32 as *mut core::ffi::c_void),
+            &mut status_len,
+            &mut index,
+        )
+        .map_err(|e| format!("读取状态码失败: {e}"))?;
+
+        let mut out = String::new();
+        loop {
+            let mut available: u32 = 0;
+            if WinHttpQueryDataAvailable(request, &mut available).is_err() || available == 0 {
+                break;
+            }
+            let mut buf = vec![0u8; available as usize];
+            let mut read: u32 = 0;
+            if WinHttpReadData(
+                request,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                buf.len() as u32,
+                &mut read,
+            )
+            .is_err()
+                || read == 0
+            {
+                break;
+            }
+            buf.truncate(read as usize);
+            out.push_str(&String::from_utf8_lossy(&buf));
+        }
+
+        let _ = WinHttpCloseHandle(request);
+        let _ = WinHttpCloseHandle(connect);
+        let _ = WinHttpCloseHandle(session);
+
+        if status >= 400 {
+            return Err(format!("HTTP {status}: {}", truncate_chars(&out, 300)));
+        }
+        Ok(out)
+    }
+}
+
+#[tauri::command]
+pub fn agent_tool_web_search(app: AppHandle, query: String) -> Result<String, String> {
+    let config = crate::agent_config::AgentConfig::load(&app);
+    if config.web_search_key.is_empty() {
+        return Err("未配置联网搜索 Key，请先在设置中填写".to_string());
+    }
+    let query = query.trim();
+    if query.is_empty() {
+        return Err("搜索关键词不能为空".to_string());
+    }
+    let body = serde_json::json!({
+        "api_key": config.web_search_key,
+        "query": query,
+        "max_results": 5,
+        "search_depth": "basic",
+    });
+    let raw = tavily_post(&body.to_string()).map_err(|e| format!("联网搜索失败: {e}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("搜索响应解析失败: {e}"))?;
+    let answer = parsed
+        .get("answer")
+        .and_then(|a| a.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut results = Vec::new();
+    if let Some(arr) = parsed.get("results").and_then(|r| r.as_array()) {
+        for item in arr.iter().take(5) {
+            let title = item
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            let url = item
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string();
+            let content = item
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            results.push(serde_json::json!({
+                "title": title,
+                "url": url,
+                "content": truncate_chars(&content, 300),
+            }));
+        }
+    }
+    ok_json(serde_json::json!({
+        "ok": true,
+        "answer": truncate_chars(&answer, 500),
+        "results": results,
     }))
 }
 

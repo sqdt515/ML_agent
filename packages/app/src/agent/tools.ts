@@ -222,10 +222,25 @@ export const agentTools: AgentTool[] = [
     },
     executor: async (args) => invokeTool('agent_tool_exec', { cmd: String(args.cmd ?? '') }),
   },
+  {
+    name: 'web_search',
+    description: '联网搜索（Tavily），返回答案摘要和相关结果列表',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '搜索关键词或问题' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_web_search', { query: String(args.query ?? '') }),
+  },
 ]
 
-export function toolsToPayload(tools: AgentTool[], execEnabled = false): Array<Record<string, unknown>> {
-  const active = execEnabled ? tools : tools.filter((t) => t.name !== 'exec')
+export function toolsToPayload(tools: AgentTool[], execEnabled = false, webSearchEnabled = false): Array<Record<string, unknown>> {
+  const active = tools.filter((t) => {
+    if (t.name === 'exec' && !execEnabled) return false
+    if (t.name === 'web_search' && !webSearchEnabled) return false
+    return true
+  })
   const schemas: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [
     ...active,
     ...metaTools,
@@ -236,9 +251,10 @@ export function toolsToPayload(tools: AgentTool[], execEnabled = false): Array<R
   }))
 }
 
-export function findTool(name: string, execEnabled = true): AgentTool | undefined {
+export function findTool(name: string, execEnabled = true, webSearchEnabled = true): AgentTool | undefined {
   const tool = agentTools.find((t) => t.name === name)
   if (!tool) return undefined
   if (tool.name === 'exec' && !execEnabled) return undefined
+  if (tool.name === 'web_search' && !webSearchEnabled) return undefined
   return tool
 }

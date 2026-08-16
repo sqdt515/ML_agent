@@ -44,6 +44,7 @@ export const en = {
   planMode: 'Plan Confirmation',
   execEnabled: 'Enable Command Execution',
   execEnabledWarning: '⚠️ Allows the AI to run system commands, which may pose security risks (e.g. deleting files, modifying system). Enable with caution.',
+  webSearchKey: 'Web Search Key',
   agentErrConfigNotLoaded: 'Agent config not loaded',
   agentErrNoApiKey: 'No API key configured. Set it in Settings first.',
   agentToolCalling: 'Calling tool: ',
