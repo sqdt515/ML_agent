@@ -152,7 +152,7 @@ export const agentTools: AgentTool[] = [
     description: '读取一个文本文件的内容（只读，仅支持 ≤1MB 的 UTF-8 文本文件）',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string', description: '要读取的文件完整路径' } },
+      properties: { path: { type: 'string', description: '要读取的文件路径（相对路径相对于工作目录，或完整绝对路径）' } },
       required: ['path'],
       additionalProperties: false,
     },

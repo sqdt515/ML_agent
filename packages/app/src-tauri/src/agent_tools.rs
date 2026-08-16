@@ -5,10 +5,11 @@ use tauri_plugin_notification::NotificationExt;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::WIN32_ERROR;
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_LOCAL_MACHINE, KEY_READ, REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+    REG_VALUE_TYPE,
 };
 use windows::Win32::System::SystemInformation::{
-    GlobalMemoryStatusEx, GetNativeSystemInfo, GetTickCount64, MEMORYSTATUSEX, SYSTEM_INFO,
+    GetNativeSystemInfo, GetTickCount64, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO,
 };
 
 fn ok_json(value: serde_json::Value) -> Result<String, String> {
@@ -16,14 +17,19 @@ fn ok_json(value: serde_json::Value) -> Result<String, String> {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // === 桌宠控制 ===
 
 #[tauri::command]
 pub fn agent_tool_pet_show(app: AppHandle) -> Result<String, String> {
-    let window = app.get_webview_window("pet").ok_or_else(|| "找不到桌宠窗口".to_string())?;
+    let window = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "找不到桌宠窗口".to_string())?;
     let _ = window.show();
     let _ = window.set_focus();
     ok_json(serde_json::json!({ "ok": true, "result": "桌宠已显示" }))
@@ -31,7 +37,9 @@ pub fn agent_tool_pet_show(app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 pub fn agent_tool_pet_hide(app: AppHandle) -> Result<String, String> {
-    let window = app.get_webview_window("pet").ok_or_else(|| "找不到桌宠窗口".to_string())?;
+    let window = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "找不到桌宠窗口".to_string())?;
     let _ = window.hide();
     ok_json(serde_json::json!({ "ok": true, "result": "桌宠已隐藏" }))
 }
@@ -114,7 +122,13 @@ fn local_utc_offset_minutes() -> Option<i32> {
     unsafe {
         let subkey = encode_w("SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation");
         let mut key: HKEY = std::mem::zeroed();
-        let rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, PCWSTR(subkey.as_ptr()), None, KEY_READ, &mut key);
+        let rc = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_READ,
+            &mut key,
+        );
         if rc != WIN32_ERROR(0) {
             return None;
         }
@@ -147,7 +161,10 @@ pub fn agent_tool_get_time() -> Result<String, String> {
             let local_secs = secs - i64::from(bias) * 60;
             let sign = if bias <= 0 { '+' } else { '-' };
             let abs = bias.abs();
-            (format_iso(local_secs), format!("UTC{sign}{:02}:{:02}", abs / 60, abs % 60))
+            (
+                format_iso(local_secs),
+                format!("UTC{sign}{:02}:{:02}", abs / 60, abs % 60),
+            )
         }
         None => (utc.clone(), "UTC".to_string()),
     };
@@ -199,7 +216,9 @@ pub fn agent_tool_note_create(app: AppHandle, text: String) -> Result<String, St
         created_at: now_secs(),
     });
     save_notes(&app, &notes)?;
-    ok_json(serde_json::json!({ "ok": true, "result": format!("便签已创建（当前共 {} 条）", notes.len()) }))
+    ok_json(
+        serde_json::json!({ "ok": true, "result": format!("便签已创建（当前共 {} 条）", notes.len()) }),
+    )
 }
 
 #[tauri::command]
@@ -232,7 +251,10 @@ pub fn agent_tool_fs_list(dir: String) -> Result<String, String> {
         let ad = a["is_dir"].as_bool().unwrap_or(false);
         let bd = b["is_dir"].as_bool().unwrap_or(false);
         bd.cmp(&ad).then_with(|| {
-            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+            a["name"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["name"].as_str().unwrap_or(""))
         })
     });
     let total = items.len();
@@ -243,8 +265,18 @@ pub fn agent_tool_fs_list(dir: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn agent_tool_fs_read(path: String) -> Result<String, String> {
-    let p = std::path::Path::new(path.trim());
+/// 解析读取路径：绝对路径原样返回，相对路径解析到工作目录（与 fs_write/fs_delete 一致，不做沙箱限制）
+fn resolve_read_path(ws: &std::path::Path, input: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(input.trim());
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        ws.join(p)
+    }
+}
+
+/// 读取文本文件的核心逻辑（纯函数，接受已解析的路径）
+fn read_text_file(p: &std::path::Path, display_path: &str) -> Result<String, String> {
     if p.as_os_str().is_empty() {
         return Err("路径不能为空".to_string());
     }
@@ -264,7 +296,19 @@ pub fn agent_tool_fs_read(path: String) -> Result<String, String> {
     const MAX_CHARS: usize = 8000;
     let truncated = content.chars().count() > MAX_CHARS;
     let display: String = content.chars().take(MAX_CHARS).collect();
-    ok_json(serde_json::json!({ "ok": true, "path": path, "size": meta.len(), "truncated": truncated, "content": display }))
+    ok_json(
+        serde_json::json!({ "ok": true, "path": display_path, "size": meta.len(), "truncated": truncated, "content": display }),
+    )
+}
+
+#[tauri::command]
+pub fn agent_tool_fs_read(app: AppHandle, path: String) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    let resolved = resolve_read_path(&workspace_dir(&app), trimmed);
+    read_text_file(&resolved, &resolved.to_string_lossy())
 }
 
 // === 系统通知 ===
@@ -316,14 +360,22 @@ fn resolve_within(ws: &std::path::Path, input: &str) -> Result<std::path::PathBu
     if p.as_os_str().is_empty() {
         return Err("路径不能为空".to_string());
     }
-    let joined = if p.is_absolute() { p.to_path_buf() } else { ws.join(p) };
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        ws.join(p)
+    };
     let parent = joined.parent().unwrap_or(ws);
     std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
-    let parent_canon = parent.canonicalize().map_err(|e| format!("解析路径失败: {e}"))?;
+    let parent_canon = parent
+        .canonicalize()
+        .map_err(|e| format!("解析路径失败: {e}"))?;
     let file_name = joined.file_name().ok_or_else(|| "路径无效".to_string())?;
     let resolved = parent_canon.join(file_name);
     std::fs::create_dir_all(ws).map_err(|e| format!("创建工作目录失败: {e}"))?;
-    let ws_canon = ws.canonicalize().map_err(|e| format!("解析工作目录失败: {e}"))?;
+    let ws_canon = ws
+        .canonicalize()
+        .map_err(|e| format!("解析工作目录失败: {e}"))?;
     if !resolved.starts_with(&ws_canon) {
         return Err("路径超出工作目录范围".to_string());
     }
@@ -336,7 +388,11 @@ fn resolve_in_workspace(app: &AppHandle, input: &str) -> Result<std::path::PathB
 }
 
 #[tauri::command]
-pub fn agent_tool_fs_write(app: AppHandle, path: String, content: String) -> Result<String, String> {
+pub fn agent_tool_fs_write(
+    app: AppHandle,
+    path: String,
+    content: String,
+) -> Result<String, String> {
     if content.len() > 1024 * 1024 {
         return Err("内容过大（>1MB）".to_string());
     }
@@ -390,7 +446,9 @@ pub fn agent_tool_exec(cmd: String) -> Result<String, String> {
             Err(e) => return Err(format!("等待命令失败: {e}")),
         }
     }
-    let output = child.wait_with_output().map_err(|e| format!("读取输出失败: {e}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("读取输出失败: {e}"))?;
 
     fn truncate(s: String) -> (String, bool) {
         const MAX_CHARS: usize = 8000;
@@ -496,7 +554,7 @@ mod tests {
         let base = temp_dir("fsread");
         let file = base.join("hello.txt");
         std::fs::write(&file, "你好，世界").unwrap();
-        let res = agent_tool_fs_read(file.to_string_lossy().to_string()).unwrap();
+        let res = read_text_file(&file, &file.to_string_lossy()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&res).unwrap();
         assert_eq!(v["ok"], true);
         assert_eq!(v["content"], "你好，世界");
@@ -506,13 +564,13 @@ mod tests {
 
     #[test]
     fn fs_read_empty_path_errors() {
-        assert!(agent_tool_fs_read("   ".to_string()).is_err());
+        assert!(read_text_file(std::path::Path::new(""), "").is_err());
     }
 
     #[test]
     fn fs_read_dir_errors() {
         let base = std::env::temp_dir();
-        assert!(agent_tool_fs_read(base.to_string_lossy().to_string()).is_err());
+        assert!(read_text_file(&base, &base.to_string_lossy()).is_err());
     }
 
     #[test]
@@ -521,7 +579,7 @@ mod tests {
         let file = base.join("big.bin");
         let data = vec![b'a'; 1024 * 1024 + 1];
         std::fs::write(&file, &data).unwrap();
-        assert!(agent_tool_fs_read(file.to_string_lossy().to_string()).is_err());
+        assert!(read_text_file(&file, &file.to_string_lossy()).is_err());
         std::fs::remove_dir_all(&base).unwrap();
     }
 
@@ -530,7 +588,37 @@ mod tests {
         let base = temp_dir("fsreadbin");
         let file = base.join("bad.bin");
         std::fs::write(&file, [0xff, 0xfe, 0x00, 0x80]).unwrap();
-        assert!(agent_tool_fs_read(file.to_string_lossy().to_string()).is_err());
+        assert!(read_text_file(&file, &file.to_string_lossy()).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_read_path_relative_joins_workspace() {
+        let ws = std::path::PathBuf::from("C:/tmp/ws");
+        let r = resolve_read_path(&ws, "hello.txt");
+        assert_eq!(r, std::path::PathBuf::from("C:/tmp/ws/hello.txt"));
+    }
+
+    #[test]
+    fn resolve_read_path_absolute_unchanged() {
+        let ws = std::path::PathBuf::from("C:/tmp/ws");
+        let r = resolve_read_path(&ws, "C:/Windows/System32");
+        assert_eq!(r, std::path::PathBuf::from("C:/Windows/System32"));
+    }
+
+    #[test]
+    fn fs_read_relative_path_resolves_to_workspace() {
+        // 端到端回归测试 4：fs_write 写相对路径 → fs_read 读相对路径一次成功
+        let base = temp_dir("fsread_rel");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let target = resolve_within(&ws, "hello.txt").unwrap();
+        std::fs::write(&target, "hello world").unwrap();
+        // 关键验证：resolve_read_path 解析的相对路径能读到 fs_write 写入的内容
+        let resolved = resolve_read_path(&ws, "hello.txt");
+        let res = read_text_file(&resolved, &resolved.to_string_lossy()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(v["content"], "hello world");
         std::fs::remove_dir_all(&base).unwrap();
     }
 
@@ -610,7 +698,10 @@ mod tests {
         let out = agent_tool_exec("echo hello_m4_test".to_string()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["ok"], true, "echo 应成功: {out}");
-        assert!(v["stdout"].as_str().unwrap().contains("hello_m4_test"), "stdout 应含回显: {out}");
+        assert!(
+            v["stdout"].as_str().unwrap().contains("hello_m4_test"),
+            "stdout 应含回显: {out}"
+        );
         assert_eq!(v["exit_code"], 0);
     }
 
@@ -648,7 +739,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         let stdout = v["stdout"].as_str().unwrap_or("");
         // cmd 默认 GBK 编码，echo 中文可能乱码；只断言无 panic 且 stdout 非空
-        assert!(!stdout.is_empty() || !v["stderr"].as_str().unwrap_or("").is_empty(), "stdout/stderr 至少其一非空: {out}");
+        assert!(
+            !stdout.is_empty() || !v["stderr"].as_str().unwrap_or("").is_empty(),
+            "stdout/stderr 至少其一非空: {out}"
+        );
     }
 
     #[test]
@@ -658,7 +752,10 @@ mod tests {
         let elapsed = start.elapsed();
         assert!(r.is_err(), "无限 ping 应触发超时返回 Err");
         assert!(r.unwrap_err().contains("超时"), "错误信息应含「超时」");
-        assert!(elapsed.as_secs() >= 28, "应接近 30 秒超时，实际 {elapsed:?}");
+        assert!(
+            elapsed.as_secs() >= 28,
+            "应接近 30 秒超时，实际 {elapsed:?}"
+        );
     }
 
     #[test]
@@ -680,7 +777,7 @@ mod tests {
         let base = temp_dir("fsreadlong");
         let file = base.join("long.txt");
         std::fs::write(&file, "a".repeat(9000)).unwrap();
-        let res = agent_tool_fs_read(file.to_string_lossy().to_string()).unwrap();
+        let res = read_text_file(&file, &file.to_string_lossy()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&res).unwrap();
         assert_eq!(v["truncated"], true);
         assert_eq!(v["content"].as_str().unwrap().chars().count(), 8000);

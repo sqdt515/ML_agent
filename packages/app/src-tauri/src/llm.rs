@@ -5,9 +5,9 @@ use tauri::AppHandle;
 use windows::core::PCWSTR;
 use windows::Win32::Networking::WinHttp::{
     WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
-    WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts,
-    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_OPEN_REQUEST_FLAGS, WINHTTP_QUERY_FLAG_NUMBER,
-    WINHTTP_QUERY_STATUS_CODE,
+    WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
+    WinHttpSetTimeouts, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_FLAG_SECURE,
+    WINHTTP_OPEN_REQUEST_FLAGS, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
 };
 
 use crate::agent_config::AgentConfig;
@@ -16,9 +16,17 @@ use crate::agent_config::AgentConfig;
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChatChunk {
-    Delta { text: String },
-    Finish { reason: String, tool_calls: Vec<Value> },
-    Error { code: String, message: String },
+    Delta {
+        text: String,
+    },
+    Finish {
+        reason: String,
+        tool_calls: Vec<Value>,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 #[derive(Debug)]
@@ -28,7 +36,10 @@ pub struct GatewayError {
 }
 
 fn network_error(message: impl Into<String>) -> GatewayError {
-    GatewayError { code: "network", message: message.into() }
+    GatewayError {
+        code: "network",
+        message: message.into(),
+    }
 }
 
 /// 解析 base_url，返回 (host, port, path, is_https)
@@ -50,9 +61,10 @@ fn parse_url(url: &str) -> Result<(String, u16, String, bool), GatewayError> {
     };
     let (host, port) = match authority.rsplit_once(':') {
         Some((h, p)) => {
-            let port = p
-                .parse::<u16>()
-                .map_err(|_| GatewayError { code: "bad_request", message: "端口格式错误".to_string() })?;
+            let port = p.parse::<u16>().map_err(|_| GatewayError {
+                code: "bad_request",
+                message: "端口格式错误".to_string(),
+            })?;
             (h.to_string(), port)
         }
         None => (authority.to_string(), if https { 443 } else { 80 }),
@@ -92,7 +104,9 @@ struct SseState {
 fn merge_tool_call(target: &mut Vec<Value>, delta: &Value) {
     let index = delta.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     while target.len() <= index {
-        target.push(json!({ "id": "", "type": "function", "function": { "name": "", "arguments": "" } }));
+        target.push(
+            json!({ "id": "", "type": "function", "function": { "name": "", "arguments": "" } }),
+        );
     }
     let item = &mut target[index];
     if let Some(id) = delta.get("id").and_then(|v| v.as_str()) {
@@ -108,7 +122,10 @@ fn merge_tool_call(target: &mut Vec<Value>, delta: &Value) {
         }
         if let Some(args) = f.get("arguments").and_then(|v| v.as_str()) {
             if !args.is_empty() {
-                let cur = item["function"]["arguments"].as_str().unwrap_or("").to_string();
+                let cur = item["function"]["arguments"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
                 item["function"]["arguments"] = json!(cur + args);
             }
         }
@@ -129,7 +146,11 @@ fn find_event_boundary(s: &[u8]) -> Option<usize> {
     None
 }
 
-fn handle_event(event: &str, state: &mut SseState, channel: &Channel<ChatChunk>) -> Result<(), GatewayError> {
+fn handle_event(
+    event: &str,
+    state: &mut SseState,
+    channel: &Channel<ChatChunk>,
+) -> Result<(), GatewayError> {
     let mut data = String::new();
     for line in event.lines() {
         if let Some(rest) = line.strip_prefix("data:") {
@@ -155,7 +176,10 @@ fn handle_event(event: &str, state: &mut SseState, channel: &Channel<ChatChunk>)
             .and_then(|m| m.as_str())
             .unwrap_or("DeepSeek 返回错误")
             .to_string();
-        return Err(GatewayError { code: "bad_request", message: msg });
+        return Err(GatewayError {
+            code: "bad_request",
+            message: msg,
+        });
     }
     if let Some(choices) = parsed.get("choices").and_then(|c| c.as_array()) {
         for choice in choices {
@@ -169,8 +193,13 @@ fn handle_event(event: &str, state: &mut SseState, channel: &Channel<ChatChunk>)
                     if !content.is_empty() {
                         state.saw_delta = true;
                         channel
-                            .send(ChatChunk::Delta { text: content.to_string() })
-                            .map_err(|_| GatewayError { code: "aborted", message: "连接已中断".to_string() })?;
+                            .send(ChatChunk::Delta {
+                                text: content.to_string(),
+                            })
+                            .map_err(|_| GatewayError {
+                                code: "aborted",
+                                message: "连接已中断".to_string(),
+                            })?;
                     }
                 }
                 if let Some(calls) = delta.get("tool_calls").and_then(|c| c.as_array()) {
@@ -185,12 +214,20 @@ fn handle_event(event: &str, state: &mut SseState, channel: &Channel<ChatChunk>)
 }
 
 /// 增量处理 SSE 缓冲：每遇到一个完整事件（空行分隔）就解析并推送
-fn process_sse_buffer(buf: &mut Vec<u8>, state: &mut SseState, channel: &Channel<ChatChunk>) -> Result<(), GatewayError> {
+fn process_sse_buffer(
+    buf: &mut Vec<u8>,
+    state: &mut SseState,
+    channel: &Channel<ChatChunk>,
+) -> Result<(), GatewayError> {
     loop {
         let Some(boundary) = find_event_boundary(buf) else {
             return Ok(());
         };
-        let sep_len = if buf[boundary..].starts_with(b"\r\n\r\n") { 4 } else { 2 };
+        let sep_len = if buf[boundary..].starts_with(b"\r\n\r\n") {
+            4
+        } else {
+            2
+        };
         let event = String::from_utf8_lossy(&buf[..boundary]).into_owned();
         buf.drain(..boundary + sep_len);
         handle_event(&event, state, channel)?;
@@ -207,7 +244,13 @@ fn read_all(request: *mut core::ffi::c_void) -> String {
             }
             let mut buf = vec![0u8; available as usize];
             let mut read: u32 = 0;
-            if WinHttpReadData(request, buf.as_mut_ptr() as *mut core::ffi::c_void, buf.len() as u32, &mut read).is_err()
+            if WinHttpReadData(
+                request,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                buf.len() as u32,
+                &mut read,
+            )
+            .is_err()
                 || read == 0
             {
                 break;
@@ -229,7 +272,13 @@ fn open_and_send(
     body: &[u8],
 ) -> Result<WinHttpHandles, GatewayError> {
     unsafe {
-        let session = WinHttpOpen(PCWSTR::null(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, PCWSTR::null(), PCWSTR::null(), 0);
+        let session = WinHttpOpen(
+            PCWSTR::null(),
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            0,
+        );
         if session.is_null() {
             return Err(network_error("WinHttpOpen 失败"));
         }
@@ -251,7 +300,11 @@ fn open_and_send(
             PCWSTR::null(),
             PCWSTR::null(),
             std::ptr::null(),
-            if https { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) },
+            if https {
+                WINHTTP_FLAG_SECURE
+            } else {
+                WINHTTP_OPEN_REQUEST_FLAGS(0)
+            },
         );
         if request.is_null() {
             return Err(network_error("WinHttpOpenRequest 失败"));
@@ -260,7 +313,10 @@ fn open_and_send(
 
         let _ = WinHttpSetTimeouts(request.0, 10000, 10000, 30000, 180000);
 
-        let auth = format!("Authorization: Bearer {}\r\nContent-Type: application/json", config.api_key);
+        let auth = format!(
+            "Authorization: Bearer {}\r\nContent-Type: application/json",
+            config.api_key
+        );
         let headers: Vec<u16> = auth.encode_utf16().collect();
         WinHttpSendRequest(
             request.0,
@@ -289,7 +345,11 @@ fn open_and_send(
             let err_body = read_all(request.0);
             return Err(map_http_status(status, &err_body));
         }
-        Ok(WinHttpHandles { _session: session, _connect: connect, request })
+        Ok(WinHttpHandles {
+            _session: session,
+            _connect: connect,
+            request,
+        })
     }
 }
 
@@ -305,7 +365,10 @@ fn extract_content(raw: &str) -> Result<String, GatewayError> {
             .and_then(|m| m.as_str())
             .unwrap_or("服务端返回错误")
             .to_string();
-        return Err(GatewayError { code: "bad_request", message: msg });
+        return Err(GatewayError {
+            code: "bad_request",
+            message: msg,
+        });
     }
     parsed["choices"][0]["message"]["content"]
         .as_str()
@@ -334,7 +397,10 @@ fn run_summarize(config: &AgentConfig, messages: Vec<Value>) -> Result<String, G
     msgs.extend(messages);
     payload["messages"] = json!(msgs);
 
-    let body = serde_json::to_vec(&payload).map_err(|e| GatewayError { code: "bad_request", message: e.to_string() })?;
+    let body = serde_json::to_vec(&payload).map_err(|e| GatewayError {
+        code: "bad_request",
+        message: e.to_string(),
+    })?;
     let handles = open_and_send(config, &endpoint, https, &host, port, &body)?;
     let raw = read_all(handles.request.0);
     extract_content(&raw)
@@ -347,7 +413,10 @@ fn map_winhttp_err(e: windows::core::Error) -> GatewayError {
     let (code, message) = match low {
         12002 => ("timeout", "请求超时，请检查网络或稍后重试".to_string()),
         12029 => ("network", "无法连接到服务器，请检查网络".to_string()),
-        12030 | 12031 => ("network", "连接被重置，请检查网络代理或稍后重试".to_string()),
+        12030 | 12031 => (
+            "network",
+            "连接被重置，请检查网络代理或稍后重试".to_string(),
+        ),
         _ => ("network", format!("网络请求失败（错误码 {low}）: {e}")),
     };
     GatewayError { code, message }
@@ -356,7 +425,12 @@ fn map_winhttp_err(e: windows::core::Error) -> GatewayError {
 fn map_http_status(status: u32, body: &str) -> GatewayError {
     let message = serde_json::from_str::<Value>(body)
         .ok()
-        .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).map(|s| s.to_string()))
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        })
         .unwrap_or_else(|| format!("HTTP {status}"));
     let code = match status {
         401 | 403 => "auth",
@@ -389,7 +463,10 @@ fn run_chat(
             payload["tool_choice"] = "auto".into();
         }
     }
-    let body = serde_json::to_vec(&payload).map_err(|e| GatewayError { code: "bad_request", message: e.to_string() })?;
+    let body = serde_json::to_vec(&payload).map_err(|e| GatewayError {
+        code: "bad_request",
+        message: e.to_string(),
+    })?;
 
     let handles = open_and_send(config, &endpoint, https, &host, port, &body)?;
 
@@ -431,7 +508,10 @@ fn run_chat(
 
         // 读循环因真实 WinHTTP 错误退出：透传具体原因
         if let Some(err) = read_error {
-            let _ = channel.send(ChatChunk::Error { code: err.code.to_string(), message: err.message });
+            let _ = channel.send(ChatChunk::Error {
+                code: err.code.to_string(),
+                message: err.message,
+            });
             return Ok(());
         }
 
@@ -465,9 +545,15 @@ fn run_chat(
         let calls: Vec<Value> = state
             .tool_calls
             .into_iter()
-            .filter(|c| !c["id"].as_str().unwrap_or("").is_empty() && !c["function"]["name"].as_str().unwrap_or("").is_empty())
+            .filter(|c| {
+                !c["id"].as_str().unwrap_or("").is_empty()
+                    && !c["function"]["name"].as_str().unwrap_or("").is_empty()
+            })
             .collect();
-        let _ = channel.send(ChatChunk::Finish { reason, tool_calls: calls });
+        let _ = channel.send(ChatChunk::Finish {
+            reason,
+            tool_calls: calls,
+        });
         Ok(())
     }
 }
@@ -489,7 +575,10 @@ pub async fn agent_chat_stream(
     }
     tauri::async_runtime::spawn_blocking(move || {
         if let Err(e) = run_chat(&config, messages, tools, &channel) {
-            let _ = channel.send(ChatChunk::Error { code: e.code.to_string(), message: e.message });
+            let _ = channel.send(ChatChunk::Error {
+                code: e.code.to_string(),
+                message: e.message,
+            });
         }
     })
     .await
@@ -522,8 +611,12 @@ mod tests {
         let ch = channel();
         let mut state = SseState::default();
         let mut buf: Vec<u8> = Vec::new();
-        buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"content\":\"你好\"},\"index\":0}]}\n\n".as_bytes());
-        buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"content\":\"世界\"},\"index\":0}]}\n\n".as_bytes());
+        buf.extend_from_slice(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"你好\"},\"index\":0}]}\n\n".as_bytes(),
+        );
+        buf.extend_from_slice(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"世界\"},\"index\":0}]}\n\n".as_bytes(),
+        );
         buf.extend_from_slice("data: [DONE]\n\n".as_bytes());
         process_sse_buffer(&mut buf, &mut state, &ch).unwrap();
         assert!(state.done);
@@ -537,7 +630,9 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"get_time\",\"arguments\":\"\"}}]},\"index\":0}]}\n\n".as_bytes());
         buf.extend_from_slice("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{}\"}}]},\"index\":0}]}\n\n".as_bytes());
-        buf.extend_from_slice("data: {\"choices\":[{\"finish_reason\":\"tool_calls\",\"index\":0}]}\n\n".as_bytes());
+        buf.extend_from_slice(
+            "data: {\"choices\":[{\"finish_reason\":\"tool_calls\",\"index\":0}]}\n\n".as_bytes(),
+        );
         buf.extend_from_slice("data: [DONE]\n\n".as_bytes());
         process_sse_buffer(&mut buf, &mut state, &ch).unwrap();
         assert_eq!(state.finish_reason.as_deref(), Some("tool_calls"));

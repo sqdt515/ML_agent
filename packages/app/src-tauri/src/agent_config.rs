@@ -207,7 +207,6 @@ mod tests {
 
     #[test]
     fn apply_clamps_budget() {
-
         // 用一个临时 AppHandle 不便构造，这里仅验证 clamp 逻辑函数
         assert_eq!(100u32.clamp(MIN_BUDGET, MAX_BUDGET), MIN_BUDGET);
         assert_eq!(99999u32.clamp(MIN_BUDGET, MAX_BUDGET), MAX_BUDGET);
