@@ -401,6 +401,18 @@ fn resolve_in_workspace(app: &AppHandle, input: &str) -> Result<std::path::PathB
     resolve_within(&workspace_dir(app), input)
 }
 
+/// 剥掉 Windows verbatim 前缀（\\?\、\\?\UNC\），返回适合展示的路径
+fn display_path(p: &std::path::Path) -> String {
+    let s = p.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", stripped)
+    } else if let Some(stripped) = s.strip_prefix("\\\\?\\") {
+        stripped.to_string()
+    } else {
+        s.into_owned()
+    }
+}
+
 #[tauri::command]
 pub fn agent_tool_fs_write(
     app: AppHandle,
@@ -412,7 +424,7 @@ pub fn agent_tool_fs_write(
     }
     let target = resolve_in_workspace(&app, &path)?;
     std::fs::write(&target, content.as_bytes()).map_err(|e| format!("写入失败: {e}"))?;
-    ok_json(serde_json::json!({ "ok": true, "result": "已写入", "path": target.to_string_lossy() }))
+    ok_json(serde_json::json!({ "ok": true, "result": "已写入", "path": display_path(&target) }))
 }
 
 #[tauri::command]
@@ -423,7 +435,7 @@ pub fn agent_tool_fs_delete(app: AppHandle, path: String) -> Result<String, Stri
         return Err("仅支持删除文件，不删除目录".to_string());
     }
     std::fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))?;
-    ok_json(serde_json::json!({ "ok": true, "result": "已删除", "path": target.to_string_lossy() }))
+    ok_json(serde_json::json!({ "ok": true, "result": "已删除", "path": display_path(&target) }))
 }
 
 // === 命令执行（高危：不做命令白名单，仅超时与输出截断防护） ===
@@ -776,6 +788,18 @@ mod tests {
         let ws = std::path::PathBuf::from("C:/tmp/ws");
         let r = resolve_read_path(&ws, "C:/Windows/System32");
         assert_eq!(r, std::path::PathBuf::from("C:/Windows/System32"));
+    }
+
+    #[test]
+    fn display_path_strips_verbatim_prefix() {
+        let p = std::path::Path::new(r"\\?\C:\Users\test\hello.txt");
+        assert_eq!(display_path(p), r"C:\Users\test\hello.txt");
+    }
+
+    #[test]
+    fn display_path_keeps_normal_path() {
+        let p = std::path::Path::new(r"C:\Users\test\hello.txt");
+        assert_eq!(display_path(p), r"C:\Users\test\hello.txt");
     }
 
     #[test]
