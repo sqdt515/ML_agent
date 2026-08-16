@@ -16,7 +16,7 @@ function eq(name: string, actual: unknown, expected: unknown): void {
 
 // ===== tools.ts =====
 const payload = toolsToPayload(agentTools)
-check('toolsToPayload 总数 = 15 (12实+3元)', payload.length === 15, 'actual=' + payload.length)
+check('toolsToPayload 总数 = 18 (15实+3元)', payload.length === 18, 'actual=' + payload.length)
 check('toolsToPayload 元素均含 type=function', payload.every((p) => (p as any).type === 'function'))
 const names = payload.map((p) => (p as any).function.name as string)
 check('含元工具 create_plan', names.includes('create_plan'))
@@ -29,6 +29,9 @@ check('含实工具 fs_read', names.includes('fs_read'))
 check('含实工具 notify', names.includes('notify'))
 check('含实工具 clipboard_read', names.includes('clipboard_read'))
 check('含实工具 clipboard_write', names.includes('clipboard_write'))
+check('含实工具 fs_write', names.includes('fs_write'))
+check('含实工具 fs_delete', names.includes('fs_delete'))
+check('含实工具 exec', names.includes('exec'))
 
 check('isMetaTool(create_plan)=true', isMetaTool('create_plan'))
 check('isMetaTool(update_step)=true', isMetaTool('update_step'))
@@ -61,6 +64,12 @@ const cw = agentTools.find((t) => t.name === 'clipboard_write')!
 check('clipboard_write required 含 text', (cw.parameters as any).required.includes('text'))
 const cr = agentTools.find((t) => t.name === 'clipboard_read')!
 check('clipboard_read 无参数', (cr.parameters as any).type === 'object')
+const fw = agentTools.find((t) => t.name === 'fs_write')!
+check('fs_write required 含 path+content', (fw.parameters as any).required.includes('path') && (fw.parameters as any).required.includes('content'))
+const fd = agentTools.find((t) => t.name === 'fs_delete')!
+check('fs_delete required 含 path', (fd.parameters as any).required.includes('path'))
+const ex = agentTools.find((t) => t.name === 'exec')!
+check('exec required 含 cmd', (ex.parameters as any).required.includes('cmd'))
 
 // ===== context.ts =====
 check('buildPlanContext(undefined)=null', buildPlanContext(undefined) === null)

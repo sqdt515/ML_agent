@@ -32,6 +32,9 @@ pub fn run() {
             agent_tools::agent_tool_notify,
             agent_tools::agent_tool_clipboard_read,
             agent_tools::agent_tool_clipboard_write,
+            agent_tools::agent_tool_fs_write,
+            agent_tools::agent_tool_fs_delete,
+            agent_tools::agent_tool_exec,
         ])
         .setup(|app| {
             println!("New AI started");

@@ -301,6 +301,114 @@ pub fn agent_tool_clipboard_write(text: String) -> Result<String, String> {
     ok_json(serde_json::json!({ "ok": true, "result": "已写入剪贴板" }))
 }
 
+// === 文件写入/删除（中危：限制在应用专属工作目录） ===
+
+fn workspace_dir(app: &AppHandle) -> std::path::PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("workspace")
+}
+
+/// 纯函数：把用户输入路径解析到 ws 目录内，防路径穿越（..）与越界
+fn resolve_within(ws: &std::path::Path, input: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::Path::new(input.trim());
+    if p.as_os_str().is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    let joined = if p.is_absolute() { p.to_path_buf() } else { ws.join(p) };
+    let parent = joined.parent().unwrap_or(ws);
+    std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+    let parent_canon = parent.canonicalize().map_err(|e| format!("解析路径失败: {e}"))?;
+    let file_name = joined.file_name().ok_or_else(|| "路径无效".to_string())?;
+    let resolved = parent_canon.join(file_name);
+    std::fs::create_dir_all(ws).map_err(|e| format!("创建工作目录失败: {e}"))?;
+    let ws_canon = ws.canonicalize().map_err(|e| format!("解析工作目录失败: {e}"))?;
+    if !resolved.starts_with(&ws_canon) {
+        return Err("路径超出工作目录范围".to_string());
+    }
+    Ok(resolved)
+}
+
+/// 把用户输入路径解析到应用工作目录内
+fn resolve_in_workspace(app: &AppHandle, input: &str) -> Result<std::path::PathBuf, String> {
+    resolve_within(&workspace_dir(app), input)
+}
+
+#[tauri::command]
+pub fn agent_tool_fs_write(app: AppHandle, path: String, content: String) -> Result<String, String> {
+    if content.len() > 1024 * 1024 {
+        return Err("内容过大（>1MB）".to_string());
+    }
+    let target = resolve_in_workspace(&app, &path)?;
+    std::fs::write(&target, content.as_bytes()).map_err(|e| format!("写入失败: {e}"))?;
+    ok_json(serde_json::json!({ "ok": true, "result": "已写入", "path": target.to_string_lossy() }))
+}
+
+#[tauri::command]
+pub fn agent_tool_fs_delete(app: AppHandle, path: String) -> Result<String, String> {
+    let target = resolve_in_workspace(&app, &path)?;
+    let meta = std::fs::metadata(&target).map_err(|e| format!("文件不存在或无法访问: {e}"))?;
+    if meta.is_dir() {
+        return Err("仅支持删除文件，不删除目录".to_string());
+    }
+    std::fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))?;
+    ok_json(serde_json::json!({ "ok": true, "result": "已删除", "path": target.to_string_lossy() }))
+}
+
+// === 命令执行（高危：不做命令白名单，仅超时与输出截断防护） ===
+
+#[tauri::command]
+pub fn agent_tool_exec(cmd: String) -> Result<String, String> {
+    let trimmed = cmd.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("命令不能为空".to_string());
+    }
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", &trimmed])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动命令失败: {e}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("命令执行超时（30 秒），已终止".to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("等待命令失败: {e}")),
+        }
+    }
+    let output = child.wait_with_output().map_err(|e| format!("读取输出失败: {e}"))?;
+
+    fn truncate(s: String) -> (String, bool) {
+        const MAX_CHARS: usize = 8000;
+        if s.chars().count() > MAX_CHARS {
+            (s.chars().take(MAX_CHARS).collect(), true)
+        } else {
+            (s, false)
+        }
+    }
+    let (stdout_disp, so_trunc) = truncate(String::from_utf8_lossy(&output.stdout).to_string());
+    let (stderr_disp, se_trunc) = truncate(String::from_utf8_lossy(&output.stderr).to_string());
+
+    ok_json(serde_json::json!({
+        "ok": output.status.success(),
+        "exit_code": output.status.code(),
+        "stdout": stdout_disp,
+        "stderr": stderr_disp,
+        "stdout_truncated": so_trunc,
+        "stderr_truncated": se_trunc,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,6 +527,36 @@ mod tests {
         let file = base.join("bad.bin");
         std::fs::write(&file, [0xff, 0xfe, 0x00, 0x80]).unwrap();
         assert!(agent_tool_fs_read(file.to_string_lossy().to_string()).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_within_rejects_parent_traversal() {
+        let base = temp_dir("resolve_trav");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        assert!(resolve_within(&ws, "../escape.txt").is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_within_accepts_relative() {
+        let base = temp_dir("resolve_rel");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let r = resolve_within(&ws, "sub/file.txt").unwrap();
+        let ws_canon = ws.canonicalize().unwrap();
+        assert!(r.starts_with(&ws_canon));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_within_rejects_absolute_outside() {
+        let base = temp_dir("resolve_abs");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let outside = std::env::temp_dir();
+        assert!(resolve_within(&ws, outside.to_string_lossy().as_ref()).is_err());
         std::fs::remove_dir_all(&base).unwrap();
     }
 

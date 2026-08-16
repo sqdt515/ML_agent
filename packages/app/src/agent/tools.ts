@@ -186,6 +186,42 @@ export const agentTools: AgentTool[] = [
     },
     executor: async (args) => invokeTool('agent_tool_clipboard_write', { text: String(args.text ?? '') }),
   },
+  {
+    name: 'fs_write',
+    description: '将文本内容写入应用专属工作目录下的一个文件（路径相对工作目录，或工作目录内的绝对路径）',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '目标文件路径（相对工作目录）' },
+        content: { type: 'string', description: '要写入的文本内容' },
+      },
+      required: ['path', 'content'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_fs_write', { path: String(args.path ?? ''), content: String(args.content ?? '') }),
+  },
+  {
+    name: 'fs_delete',
+    description: '删除应用专属工作目录下的一个文件（仅文件，不删除目录）',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string', description: '要删除的文件路径（相对工作目录）' } },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_fs_delete', { path: String(args.path ?? '') }),
+  },
+  {
+    name: 'exec',
+    description: '在系统命令行中执行一条命令（Windows cmd），返回退出码、stdout、stderr；最长执行 30 秒',
+    parameters: {
+      type: 'object',
+      properties: { cmd: { type: 'string', description: '要执行的命令' } },
+      required: ['cmd'],
+      additionalProperties: false,
+    },
+    executor: async (args) => invokeTool('agent_tool_exec', { cmd: String(args.cmd ?? '') }),
+  },
 ]
 
 export function toolsToPayload(tools: AgentTool[]): Array<Record<string, unknown>> {
