@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::ipc::Channel;
 use tauri::AppHandle;
@@ -13,10 +13,13 @@ use windows::Win32::Networking::WinHttp::{
 use crate::agent_config::AgentConfig;
 
 /// 推送给前端的流式分片
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChatChunk {
     Delta {
+        text: String,
+    },
+    Reasoning {
         text: String,
     },
     Finish {
@@ -189,6 +192,19 @@ fn handle_event(
                 }
             }
             if let Some(delta) = choice.get("delta") {
+                if let Some(reasoning) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
+                    if !reasoning.is_empty() {
+                        state.saw_delta = true;
+                        channel
+                            .send(ChatChunk::Reasoning {
+                                text: reasoning.to_string(),
+                            })
+                            .map_err(|_| GatewayError {
+                                code: "aborted",
+                                message: "连接已中断".to_string(),
+                            })?;
+                    }
+                }
                 if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                     if !content.is_empty() {
                         state.saw_delta = true;
@@ -563,9 +579,16 @@ pub async fn agent_chat_stream(
     app: AppHandle,
     messages: Vec<Value>,
     tools: Option<Vec<Value>>,
+    model: Option<String>,
     channel: Channel<ChatChunk>,
 ) -> Result<(), String> {
-    let config = AgentConfig::load(&app);
+    let mut config = AgentConfig::load(&app);
+    if let Some(m) = model {
+        let trimmed = m.trim();
+        if !trimmed.is_empty() {
+            config.model = trimmed.to_string();
+        }
+    }
     if config.api_key.trim().is_empty() {
         let _ = channel.send(ChatChunk::Error {
             code: "missing_key".to_string(),
@@ -621,6 +644,38 @@ mod tests {
         process_sse_buffer(&mut buf, &mut state, &ch).unwrap();
         assert!(state.done);
         assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn parse_sse_reasoning_content() {
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<ChatChunk>::new()));
+        let recv = received.clone();
+        let ch = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(s) = body {
+                if let Ok(chunk) = serde_json::from_str::<ChatChunk>(&s) {
+                    recv.lock().unwrap().push(chunk);
+                }
+            }
+            Ok(())
+        });
+        let mut state = SseState::default();
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"让我思考\"},\"index\":0}]}\n\n".as_bytes(),
+        );
+        buf.extend_from_slice(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"答案\"},\"index\":0}]}\n\n".as_bytes(),
+        );
+        buf.extend_from_slice("data: [DONE]\n\n".as_bytes());
+        process_sse_buffer(&mut buf, &mut state, &ch).unwrap();
+        let msgs = received.lock().unwrap();
+        let has_reasoning = msgs
+            .iter()
+            .any(|c| matches!(c, ChatChunk::Reasoning { .. }));
+        let has_delta = msgs.iter().any(|c| matches!(c, ChatChunk::Delta { .. }));
+        assert!(has_reasoning, "应收到 Reasoning 分片");
+        assert!(has_delta, "应收到 Delta 分片");
+        assert!(state.saw_delta);
     }
 
     #[test]

@@ -93,6 +93,7 @@ export const useAgentStore = defineStore('agent', () => {
           createdAt: typeof s.createdAt === 'number' ? s.createdAt : now(),
           updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : now(),
           summarized: s.summarized === true,
+          model: typeof s.model === 'string' ? s.model : undefined,
           messages: (s.messages as Array<Record<string, unknown>>)
             .filter(
               (m) =>
@@ -104,6 +105,7 @@ export const useAgentStore = defineStore('agent', () => {
               id: String(m.id),
               role: m.role as ChatRole,
               content: typeof m.content === 'string' ? m.content : '',
+              reasoning: typeof m.reasoning === 'string' ? m.reasoning : undefined,
               toolCallId: typeof m.toolCallId === 'string' ? m.toolCallId : undefined,
               toolName: typeof m.toolName === 'string' ? m.toolName : undefined,
               toolCalls: Array.isArray(m.toolCalls) ? (m.toolCalls as ToolCall[]) : undefined,
@@ -160,6 +162,14 @@ export const useAgentStore = defineStore('agent', () => {
 
   function switchSession(id: string): void {
     currentId.value = id
+  }
+
+  function setSessionModel(model: string): void {
+    const s = current.value
+    if (!s) return
+    s.model = model.trim() || undefined
+    s.updatedAt = now()
+    persist()
   }
 
   function removeSession(id: string): void {
@@ -340,6 +350,12 @@ export const useAgentStore = defineStore('agent', () => {
             if (m.role === 'assistant') m.content += text
           })
         },
+        onReasoning: (text) => {
+          if (stopRequested.value) return
+          updateMessage(sessionId, curAssistantId, (m) => {
+            if (m.role === 'assistant') m.reasoning = (m.reasoning ?? '') + text
+          })
+        },
         onFinish: (reason, calls) => {
           finishReason = reason
           toolCalls = calls
@@ -350,7 +366,7 @@ export const useAgentStore = defineStore('agent', () => {
       })
 
       try {
-        await streamChat(toOpenAIMessages(all), tools, channel)
+        await streamChat(toOpenAIMessages(all), tools, channel, s.model)
       } catch (e) {
         error.value = String(e)
         break
@@ -545,6 +561,7 @@ export const useAgentStore = defineStore('agent', () => {
     newChat,
     clearChat,
     switchSession,
+    setSessionModel,
     removeSession,
     send,
     stop,

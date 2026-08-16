@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useAgentStore } from '@/stores/agent'
 import { useI18n } from '@/composables/useI18n'
 import { renderMarkdown } from '@/agent/markdown'
+import { PROVIDER_PRESETS } from '@/agent/types'
 import { isTauri } from '@/utils/env'
 
 const { t } = useI18n()
@@ -17,7 +18,7 @@ const currentPlan = computed(() => agent.current?.plan ?? null)
 const streamLen = computed(() => {
   const msgs = agent.messages
   const last = msgs[msgs.length - 1]
-  return last ? last.content.length : 0
+  return last ? last.content.length + (last.reasoning?.length ?? 0) : 0
 })
 
 async function scrollToBottom(): Promise<void> {
@@ -60,6 +61,13 @@ function onSend(): void {
 function onSwitchSession(e: Event): void {
   const target = e.target as HTMLSelectElement
   if (target.value) agent.switchSession(target.value)
+}
+
+const allPresetModels = computed(() => PROVIDER_PRESETS.flatMap((p) => p.models.map((m) => m.id)))
+
+function onChangeModel(e: Event): void {
+  const target = e.target as HTMLInputElement
+  agent.setSessionModel(target.value)
 }
 
 function minimize(): void {
@@ -106,6 +114,17 @@ function exitApp(): void {
       <select class="session-select" :value="agent.currentId ?? ''" @change="onSwitchSession">
         <option v-for="s in agent.sessions" :key="s.id" :value="s.id">{{ s.title }}</option>
       </select>
+      <input
+        class="session-model"
+        list="session-model-presets"
+        :value="agent.current?.model ?? ''"
+        :placeholder="t('sessionModel')"
+        spellcheck="false"
+        @change="onChangeModel"
+      />
+      <datalist id="session-model-presets">
+        <option v-for="m in allPresetModels" :key="m" :value="m"></option>
+      </datalist>
       <button class="ghost-btn" @click="agent.newChat()">{{ t('newChat') }}</button>
       <button class="ghost-btn" @click="agent.clearChat()">{{ t('clear') }}</button>
     </div>
@@ -154,7 +173,16 @@ function exitApp(): void {
           <div v-if="m.toolCalls && m.toolCalls.length" class="tool-line">
             <span class="tool-chip">🔧 {{ m.toolCalls.map((c) => c.function.name).join(', ') }}</span>
           </div>
+          <details
+            v-if="m.reasoning"
+            class="reasoning"
+            :open="idx === agent.messages.length - 1 && agent.streaming && !m.content"
+          >
+            <summary class="reasoning-summary">💭 {{ t('reasoningTitle') }}</summary>
+            <div class="reasoning-body" v-html="renderMarkdown(m.reasoning)"></div>
+          </details>
           <div
+            v-if="m.content"
             class="bubble assistant-bubble"
             :class="{ streaming: idx === agent.messages.length - 1 && agent.streaming }"
             v-html="renderMarkdown(m.content)"
@@ -271,6 +299,18 @@ function exitApp(): void {
 .session-select {
   flex: 1;
   min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-color);
+  font-size: 12px;
+  outline: none;
+}
+
+.session-model {
+  width: 130px;
   height: 26px;
   padding: 0 6px;
   border: 1px solid var(--border-color);
@@ -475,6 +515,49 @@ function exitApp(): void {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
+}
+
+.reasoning {
+  max-width: 82%;
+  margin: 2px 0;
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  overflow: hidden;
+}
+
+.reasoning-summary {
+  cursor: pointer;
+  padding: 6px 11px;
+  font-size: 12px;
+  color: var(--text-dim);
+  user-select: none;
+  list-style: none;
+}
+
+.reasoning-summary::-webkit-details-marker {
+  display: none;
+}
+
+.reasoning-summary:hover {
+  color: var(--text-color);
+}
+
+.reasoning-body {
+  padding: 4px 11px 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  border-top: 1px dashed var(--border-color);
+  word-break: break-word;
+}
+
+:deep(.reasoning-body p) {
+  margin: 4px 0;
+}
+
+:deep(.reasoning-body p:last-child) {
+  margin-bottom: 0;
 }
 
 .tool-line {

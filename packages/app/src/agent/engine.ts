@@ -3,6 +3,7 @@ import type { ChatChunk, ChatMessage, ToolCall } from './types'
 
 export interface EngineHandlers {
   onDelta?: (text: string) => void
+  onReasoning?: (text: string) => void
   onFinish?: (reason: string, toolCalls: ToolCall[]) => void
   onError?: (code: string, message: string) => void
 }
@@ -38,6 +39,9 @@ export function createChatChannel(handlers: EngineHandlers): Channel<ChatChunk> 
       case 'delta':
         handlers.onDelta?.(msg.text)
         break
+      case 'reasoning':
+        handlers.onReasoning?.(msg.text)
+        break
       case 'finish':
         handlers.onFinish?.(msg.reason, msg.tool_calls ?? [])
         break
@@ -53,6 +57,7 @@ export async function streamChat(
   messages: OpenAIOutMessage[],
   tools: Array<Record<string, unknown>>,
   channel: Channel<ChatChunk>,
+  model?: string,
 ): Promise<void> {
-  await invoke('agent_chat_stream', { messages, tools, channel })
+  await invoke('agent_chat_stream', { messages, tools, model, channel })
 }

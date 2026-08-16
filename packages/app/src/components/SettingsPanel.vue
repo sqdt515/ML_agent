@@ -4,6 +4,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useSettingsStore } from '@/stores/settings'
 import { loadConfig, saveConfig } from '@/agent/config'
 import { isTauri } from '@/utils/env'
+import { PROVIDER_PRESETS, isReasonerModel, findPresetByBaseUrl } from '@/agent/types'
 import type { Locale } from '@/i18n'
 import type { ThemeMode } from '@/stores/settings'
 
@@ -41,7 +42,35 @@ const webSearchKeyLast4 = ref('')
 const saving = ref(false)
 const savedHint = ref(false)
 
-const modelOptions = ['deepseek-chat', 'deepseek-reasoner']
+// 供应商 + 模型选择（预设下拉 + 自定义输入双模式）
+const providerId = ref('deepseek')
+const modelCustom = ref(false)
+
+const activePreset = computed(() => PROVIDER_PRESETS.find((p) => p.id === providerId.value) ?? null)
+const presetModels = computed(() => activePreset.value?.models.map((m) => m.id) ?? [])
+
+const caps = computed(() => {
+  const p = activePreset.value
+  if (!p) return null
+  const m = p.models.find((x) => x.id === model.value)
+  return {
+    toolCalls: p.capabilities.toolCalls,
+    streaming: p.capabilities.streaming,
+    reasoning: m?.reasoning ?? p.capabilities.reasoning ?? isReasonerModel(model.value),
+    contextWindow: p.capabilities.contextWindow,
+  }
+})
+
+function onProviderChange() {
+  const p = activePreset.value
+  if (p) {
+    baseUrl.value = p.baseUrl
+    model.value = p.defaultModel
+    modelCustom.value = false
+  }
+  // 选择「自定义」时保留当前 baseUrl/model，由用户手动填写
+}
+
 const apiKeyPlaceholder = computed(() =>
   apiKeySet.value ? `sk-...（已配置 ****${apiKeyLast4.value}，留空不修改）` : 'sk-...',
 )
@@ -67,6 +96,14 @@ async function loadAgentConfig() {
     apiKeyLast4.value = cfg.apiKeyLast4
     baseUrl.value = cfg.baseUrl
     model.value = cfg.model
+    const preset = findPresetByBaseUrl(cfg.baseUrl)
+    if (preset) {
+      providerId.value = preset.id
+      modelCustom.value = !preset.models.some((m) => m.id === cfg.model)
+    } else {
+      providerId.value = 'custom'
+      modelCustom.value = true
+    }
     systemPrompt.value = cfg.systemPrompt
     toolEnabled.value = cfg.toolEnabled
     contextBudget.value = cfg.contextBudget
@@ -183,16 +220,55 @@ onMounted(() => {
         </label>
 
         <label class="field">
+          <span class="field-label">{{ t('provider') }}</span>
+          <select v-model="providerId" class="text-input select" @change="onProviderChange">
+            <option v-for="p in PROVIDER_PRESETS" :key="p.id" :value="p.id">{{ p.name }}</option>
+            <option value="custom">{{ t('customProvider') }}</option>
+          </select>
+        </label>
+
+        <label class="field">
           <span class="field-label">{{ t('baseUrl') }}</span>
           <input v-model="baseUrl" type="text" class="text-input" spellcheck="false" />
         </label>
 
         <label class="field">
           <span class="field-label">{{ t('model') }}</span>
-          <select v-model="model" class="text-input select">
-            <option v-for="m in modelOptions" :key="m" :value="m">{{ m }}</option>
-          </select>
+          <div class="model-row">
+            <select
+              v-if="!modelCustom && activePreset"
+              v-model="model"
+              class="text-input select model-select"
+            >
+              <option v-for="m in presetModels" :key="m" :value="m">{{ m }}</option>
+            </select>
+            <input
+              v-else
+              v-model="model"
+              type="text"
+              class="text-input"
+              placeholder="gpt-4o / deepseek-chat"
+              spellcheck="false"
+            />
+            <button
+              type="button"
+              class="mini-btn"
+              :title="modelCustom ? t('model') : t('customModel')"
+              @click="modelCustom = !modelCustom"
+            >
+              {{ modelCustom ? '▾' : '✏️' }}
+            </button>
+          </div>
         </label>
+
+        <div v-if="caps" class="caps-row">
+          <span class="cap-chip" :class="{ on: caps.toolCalls }">🛠 {{ t('modelCapToolCalls') }}</span>
+          <span class="cap-chip" :class="{ on: caps.streaming }">⚡ {{ t('modelCapStreaming') }}</span>
+          <span class="cap-chip" :class="{ on: caps.reasoning }">💭 {{ t('modelCapReasoning') }}</span>
+          <span class="cap-chip">
+            📐 {{ caps.contextWindow >= 1000 ? Math.round(caps.contextWindow / 1000) + 'k' : caps.contextWindow }} {{ t('modelCapContext') }}
+          </span>
+        </div>
 
         <label class="field">
           <span class="field-label">{{ t('systemPrompt') }}</span>
@@ -376,6 +452,55 @@ onMounted(() => {
 
 .text-input.select {
   height: 30px;
+}
+
+.model-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.model-select {
+  flex: 1;
+}
+
+.mini-btn {
+  width: 28px;
+  height: 30px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  color: var(--text-bright);
+  border-color: var(--accent-border);
+}
+
+.caps-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.cap-chip {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.cap-chip.on {
+  color: var(--accent-text);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
 }
 
 .text-input.area {

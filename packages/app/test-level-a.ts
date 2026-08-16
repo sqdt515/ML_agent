@@ -1,6 +1,7 @@
 // 层次 A 前端纯函数测试（临时脚本，非产品代码）
 import { toolsToPayload, isMetaTool, metaTools, agentTools, findTool } from './src/agent/tools'
 import { buildPlanContext, buildSystemPrompt } from './src/agent/context'
+import { PROVIDER_PRESETS, isReasonerModel, findPresetByBaseUrl } from './src/agent/types'
 
 let pass = 0
 let fail = 0
@@ -123,6 +124,27 @@ check('toolEnabled=false 含关闭工具', sp2.includes('关闭工具'))
 check('toolEnabled=false 不含 create_plan', !sp2.includes('create_plan'))
 const sp3 = buildSystemPrompt('base', true, true, 5)
 check('dropped>0 含省略提示', sp3.includes('省略'))
+
+// ===== M6 供应商预设 / reasoner =====
+check('预设数 >= 6', PROVIDER_PRESETS.length >= 6, 'actual=' + PROVIDER_PRESETS.length)
+check('预设含 deepseek', PROVIDER_PRESETS.some((p) => p.id === 'deepseek'))
+check('预设含 openai', PROVIDER_PRESETS.some((p) => p.id === 'openai'))
+check('预设含 moonshot', PROVIDER_PRESETS.some((p) => p.id === 'moonshot'))
+check('预设含 qwen', PROVIDER_PRESETS.some((p) => p.id === 'qwen'))
+check('预设含 glm', PROVIDER_PRESETS.some((p) => p.id === 'glm'))
+check('预设含 ollama', PROVIDER_PRESETS.some((p) => p.id === 'ollama'))
+check('预设 baseUrl 唯一', new Set(PROVIDER_PRESETS.map((p) => p.baseUrl)).size === PROVIDER_PRESETS.length)
+check('每个预设至少 1 个模型', PROVIDER_PRESETS.every((p) => p.models.length >= 1))
+check('deepseek 含 reasoner 模型(带 reasoning 标记)', PROVIDER_PRESETS.find((p) => p.id === 'deepseek')!.models.some((m) => m.id === 'deepseek-reasoner' && m.reasoning))
+check('isReasonerModel(deepseek-reasoner)=true', isReasonerModel('deepseek-reasoner'))
+check('isReasonerModel(deepseek-chat)=false', !isReasonerModel('deepseek-chat'))
+check('isReasonerModel(o1)=true', isReasonerModel('o1'))
+check('isReasonerModel(o3-mini)=true', isReasonerModel('o3-mini'))
+check('isReasonerModel(gpt-4o)=false', !isReasonerModel('gpt-4o'))
+check('isReasonerModel(deepseek-r1)=true', isReasonerModel('deepseek-r1'))
+check('findPresetByBaseUrl(deepseek)=deepseek', findPresetByBaseUrl('https://api.deepseek.com')?.id === 'deepseek')
+check('findPresetByBaseUrl(尾斜杠归一)', findPresetByBaseUrl('https://api.deepseek.com/')?.id === 'deepseek')
+check('findPresetByBaseUrl(未知)=undefined', findPresetByBaseUrl('https://example.com/v1') === undefined)
 
 console.log('\n===== 纯函数测试结果: ' + pass + ' pass, ' + fail + ' fail =====')
 for (const r of results) console.log(r)
