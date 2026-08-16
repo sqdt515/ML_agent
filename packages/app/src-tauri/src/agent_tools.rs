@@ -377,7 +377,11 @@ pub fn agent_tool_exec(cmd: String) -> Result<String, String> {
             Ok(Some(_)) => break,
             Ok(None) => {
                 if std::time::Instant::now() > deadline {
-                    let _ = child.kill();
+                    let pid = child.id();
+                    // /T 杀整棵进程树（cmd + 子进程），/F 强制，确保管道写端全部关闭
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .status();
                     let _ = child.wait();
                     return Err("命令执行超时（30 秒），已终止".to_string());
                 }
@@ -557,6 +561,117 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         let outside = std::env::temp_dir();
         assert!(resolve_within(&ws, outside.to_string_lossy().as_ref()).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_within_empty_path_errors() {
+        let base = temp_dir("resolve_empty");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        assert!(resolve_within(&ws, "").is_err());
+        assert!(resolve_within(&ws, "   ").is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_within_accepts_absolute_inside() {
+        let base = temp_dir("resolve_abs_in");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let abs = ws.join("f.txt");
+        let r = resolve_within(&ws, abs.to_string_lossy().as_ref()).unwrap();
+        let ws_canon = ws.canonicalize().unwrap();
+        assert!(r.starts_with(&ws_canon));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_within_rejects_deep_traversal() {
+        let base = temp_dir("resolve_deep");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        assert!(resolve_within(&ws, "a/../../escape.txt").is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn resolve_within_rejects_windows_root() {
+        let base = temp_dir("resolve_root");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let root = std::path::PathBuf::from("C:\\Windows\\System32");
+        assert!(resolve_within(&ws, root.to_string_lossy().as_ref()).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn exec_echo_returns_stdout() {
+        let out = agent_tool_exec("echo hello_m4_test".to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["ok"], true, "echo 应成功: {out}");
+        assert!(v["stdout"].as_str().unwrap().contains("hello_m4_test"), "stdout 应含回显: {out}");
+        assert_eq!(v["exit_code"], 0);
+    }
+
+    #[test]
+    fn exec_empty_cmd_errors() {
+        assert!(agent_tool_exec("".to_string()).is_err());
+        assert!(agent_tool_exec("   ".to_string()).is_err());
+    }
+
+    #[test]
+    fn exec_missing_command_returns_nonzero() {
+        let out = agent_tool_exec("nonexistent_cmd_xyz_12345".to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["ok"], false);
+        assert_ne!(v["exit_code"], 0);
+    }
+
+    #[test]
+    fn exec_preserves_exit_code() {
+        let out = agent_tool_exec("exit /b 5".to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["exit_code"], 5);
+    }
+
+    #[test]
+    fn exec_truncates_long_output() {
+        let out = agent_tool_exec("for /L %i in (1,1,3000) do @echo xxxxxxxx".to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["stdout_truncated"], true, "3000 行输出应触发截断: {out}");
+    }
+
+    #[test]
+    fn exec_utf8_output() {
+        let out = agent_tool_exec("echo 中文测试".to_string()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let stdout = v["stdout"].as_str().unwrap_or("");
+        // cmd 默认 GBK 编码，echo 中文可能乱码；只断言无 panic 且 stdout 非空
+        assert!(!stdout.is_empty() || !v["stderr"].as_str().unwrap_or("").is_empty(), "stdout/stderr 至少其一非空: {out}");
+    }
+
+    #[test]
+    fn exec_times_out() {
+        let start = std::time::Instant::now();
+        let r = agent_tool_exec("ping -t 127.0.0.1".to_string());
+        let elapsed = start.elapsed();
+        assert!(r.is_err(), "无限 ping 应触发超时返回 Err");
+        assert!(r.unwrap_err().contains("超时"), "错误信息应含「超时」");
+        assert!(elapsed.as_secs() >= 28, "应接近 30 秒超时，实际 {elapsed:?}");
+    }
+
+    #[test]
+    fn fs_write_delete_roundtrip_sandboxed() {
+        let base = temp_dir("fs_roundtrip");
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let target = resolve_within(&ws, "hello.txt").unwrap();
+        std::fs::write(&target, "m4 内容".as_bytes()).unwrap();
+        let read_back = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(read_back, "m4 内容");
+        std::fs::remove_file(&target).unwrap();
+        assert!(!target.exists());
         std::fs::remove_dir_all(&base).unwrap();
     }
 
