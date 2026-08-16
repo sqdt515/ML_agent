@@ -279,7 +279,7 @@ export const useAgentStore = defineStore('agent', () => {
       return
     }
 
-    const tools = cfg.toolEnabled ? toolsToPayload(agentTools) : []
+    const tools = cfg.toolEnabled ? toolsToPayload(agentTools, cfg.execEnabled) : []
     const maxRounds = cfg.maxAgentRounds || MAX_AGENT_ROUNDS
     const getSession = (): ChatSession | null => sessions.value.find((x) => x.id === sessionId) ?? null
 
@@ -433,7 +433,7 @@ export const useAgentStore = defineStore('agent', () => {
       // 执行实工具并回填全部结果
       const realResults = await Promise.all(
         realCalls.map(async (tc) => {
-          const tool = findTool(tc.function.name)
+          const tool = findTool(tc.function.name, cfg.execEnabled)
           if (!tool) {
             return { call: tc, content: JSON.stringify({ ok: false, error: `未知工具 ${tc.function.name}` }) }
           }

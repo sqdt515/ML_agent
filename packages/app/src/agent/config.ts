@@ -10,6 +10,7 @@ export interface AgentConfigInput {
   contextBudget?: number
   maxAgentRounds?: number
   planMode?: boolean
+  execEnabled?: boolean
 }
 
 export async function loadConfig(): Promise<AgentConfig> {

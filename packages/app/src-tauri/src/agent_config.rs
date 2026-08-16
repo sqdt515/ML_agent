@@ -27,6 +27,7 @@ pub struct AgentConfig {
     pub context_budget: u32,
     pub max_agent_rounds: u32,
     pub plan_mode: bool,
+    pub exec_enabled: bool,
 }
 
 impl Default for AgentConfig {
@@ -40,6 +41,7 @@ impl Default for AgentConfig {
             context_budget: DEFAULT_CONTEXT_BUDGET,
             max_agent_rounds: DEFAULT_MAX_AGENT_ROUNDS,
             plan_mode: true,
+            exec_enabled: false,
         }
     }
 }
@@ -83,6 +85,7 @@ pub struct AgentConfigView {
     pub context_budget: u32,
     pub max_agent_rounds: u32,
     pub plan_mode: bool,
+    pub exec_enabled: bool,
 }
 
 /// 前端提交的配置（可选字段，None 表示保持原值；api_key 为空字符串表示不修改）
@@ -97,6 +100,7 @@ pub struct AgentConfigInput {
     pub context_budget: Option<u32>,
     pub max_agent_rounds: Option<u32>,
     pub plan_mode: Option<bool>,
+    pub exec_enabled: Option<bool>,
 }
 
 pub fn view(config: &AgentConfig) -> AgentConfigView {
@@ -115,6 +119,7 @@ pub fn view(config: &AgentConfig) -> AgentConfigView {
         context_budget: config.context_budget,
         max_agent_rounds: config.max_agent_rounds,
         plan_mode: config.plan_mode,
+        exec_enabled: config.exec_enabled,
     }
 }
 
@@ -153,6 +158,9 @@ pub fn apply(app: &AppHandle, input: AgentConfigInput) -> Result<AgentConfigView
     if let Some(plan_mode) = input.plan_mode {
         config.plan_mode = plan_mode;
     }
+    if let Some(exec_enabled) = input.exec_enabled {
+        config.exec_enabled = exec_enabled;
+    }
     config.save(app)?;
     Ok(view(&config))
 }
@@ -184,6 +192,7 @@ mod tests {
         assert_eq!(c.context_budget, 24000);
         assert_eq!(c.max_agent_rounds, 20);
         assert!(c.plan_mode);
+        assert!(!c.exec_enabled);
     }
 
     #[test]
@@ -219,6 +228,7 @@ mod tests {
         let raw = serde_json::to_string(&v).unwrap();
         assert!(raw.contains("\"maxAgentRounds\""));
         assert!(raw.contains("\"planMode\""));
+        assert!(raw.contains("\"execEnabled\""));
         assert!(raw.contains("\"apiKeySet\""));
         assert!(!raw.contains("max_agent_rounds"));
         assert!(!raw.contains("plan_mode"));

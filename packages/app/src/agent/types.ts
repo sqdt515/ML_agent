@@ -66,6 +66,7 @@ export interface AgentConfig {
   contextBudget: number
   maxAgentRounds: number
   planMode: boolean
+  execEnabled: boolean
 }
 
 // === 自治执行计划（层次 A） ===

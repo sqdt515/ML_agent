@@ -224,9 +224,10 @@ export const agentTools: AgentTool[] = [
   },
 ]
 
-export function toolsToPayload(tools: AgentTool[]): Array<Record<string, unknown>> {
+export function toolsToPayload(tools: AgentTool[], execEnabled = false): Array<Record<string, unknown>> {
+  const active = execEnabled ? tools : tools.filter((t) => t.name !== 'exec')
   const schemas: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [
-    ...tools,
+    ...active,
     ...metaTools,
   ]
   return schemas.map((t) => ({
@@ -235,6 +236,9 @@ export function toolsToPayload(tools: AgentTool[]): Array<Record<string, unknown
   }))
 }
 
-export function findTool(name: string): AgentTool | undefined {
-  return agentTools.find((t) => t.name === name)
+export function findTool(name: string, execEnabled = true): AgentTool | undefined {
+  const tool = agentTools.find((t) => t.name === name)
+  if (!tool) return undefined
+  if (tool.name === 'exec' && !execEnabled) return undefined
+  return tool
 }

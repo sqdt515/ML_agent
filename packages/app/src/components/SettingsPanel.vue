@@ -34,6 +34,7 @@ const toolEnabled = ref(true)
 const contextBudget = ref(24000)
 const maxAgentRounds = ref(20)
 const planMode = ref(true)
+const execEnabled = ref(false)
 const saving = ref(false)
 const savedHint = ref(false)
 
@@ -63,6 +64,7 @@ async function loadAgentConfig() {
     contextBudget.value = cfg.contextBudget
     maxAgentRounds.value = cfg.maxAgentRounds
     planMode.value = cfg.planMode
+    execEnabled.value = cfg.execEnabled
   } catch {
     /* noop */
   }
@@ -82,6 +84,7 @@ async function saveAgentConfig() {
       contextBudget: contextBudget.value,
       maxAgentRounds: maxAgentRounds.value,
       planMode: planMode.value,
+      execEnabled: execEnabled.value,
     })
     apiKey.value = ''
     apiKeySet.value = cfg.apiKeySet
@@ -214,6 +217,15 @@ onMounted(() => {
             <span class="slider"></span>
           </label>
         </div>
+
+        <div class="field row">
+          <span class="field-label">{{ t('execEnabled') }}</span>
+          <label class="switch">
+            <input v-model="execEnabled" type="checkbox" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p v-if="execEnabled" style="color:#d97706;font-size:12px;margin:2px 0 10px;">{{ t('execEnabledWarning') }}</p>
 
         <div class="form-actions">
           <button class="save-btn" :disabled="saving" @click="saveAgentConfig">

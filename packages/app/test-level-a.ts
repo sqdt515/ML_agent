@@ -1,5 +1,5 @@
 // 层次 A 前端纯函数测试（临时脚本，非产品代码）
-import { toolsToPayload, isMetaTool, metaTools, agentTools } from './src/agent/tools'
+import { toolsToPayload, isMetaTool, metaTools, agentTools, findTool } from './src/agent/tools'
 import { buildPlanContext, buildSystemPrompt } from './src/agent/context'
 
 let pass = 0
@@ -16,7 +16,9 @@ function eq(name: string, actual: unknown, expected: unknown): void {
 
 // ===== tools.ts =====
 const payload = toolsToPayload(agentTools)
-check('toolsToPayload 总数 = 18 (15实+3元)', payload.length === 18, 'actual=' + payload.length)
+check('toolsToPayload 默认总数 = 17 (14实+3元, 不含exec)', payload.length === 17, 'actual=' + payload.length)
+const payloadWithExec = toolsToPayload(agentTools, true)
+check('toolsToPayload(execEnabled=true) 总数 = 18', payloadWithExec.length === 18, 'actual=' + payloadWithExec.length)
 check('toolsToPayload 元素均含 type=function', payload.every((p) => (p as any).type === 'function'))
 const names = payload.map((p) => (p as any).function.name as string)
 check('含元工具 create_plan', names.includes('create_plan'))
@@ -31,7 +33,9 @@ check('含实工具 clipboard_read', names.includes('clipboard_read'))
 check('含实工具 clipboard_write', names.includes('clipboard_write'))
 check('含实工具 fs_write', names.includes('fs_write'))
 check('含实工具 fs_delete', names.includes('fs_delete'))
-check('含实工具 exec', names.includes('exec'))
+check('默认 payload 不含 exec', !names.includes('exec'))
+const namesWithExec = payloadWithExec.map((p) => (p as any).function.name as string)
+check('execEnabled=true 含 exec', namesWithExec.includes('exec'))
 
 check('isMetaTool(create_plan)=true', isMetaTool('create_plan'))
 check('isMetaTool(update_step)=true', isMetaTool('update_step'))
@@ -70,6 +74,8 @@ const fd = agentTools.find((t) => t.name === 'fs_delete')!
 check('fs_delete required 含 path', (fd.parameters as any).required.includes('path'))
 const ex = agentTools.find((t) => t.name === 'exec')!
 check('exec required 含 cmd', (ex.parameters as any).required.includes('cmd'))
+check('findTool(exec, false)=undefined', findTool('exec', false) === undefined)
+check('findTool(exec, true)=exec', findTool('exec', true) === ex)
 
 // ===== context.ts =====
 check('buildPlanContext(undefined)=null', buildPlanContext(undefined) === null)
