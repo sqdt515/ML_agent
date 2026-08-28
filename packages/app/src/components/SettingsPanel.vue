@@ -5,26 +5,35 @@ import { useSettingsStore } from '@/stores/settings'
 import { loadConfig, saveConfig } from '@/agent/config'
 import { isTauri } from '@/utils/env'
 import { PROVIDER_PRESETS, isReasonerModel, findPresetByBaseUrl } from '@/agent/types'
+import type { AuditEntry } from '@/agent/types'
+import { agentTools } from '@/agent/tools'
+import { invoke } from '@tauri-apps/api/core'
 import type { Locale } from '@/i18n'
 import type { ThemeMode } from '@/stores/settings'
 
 const { t } = useI18n()
 const settings = useSettingsStore()
 
-// 语言选项
 const localeOptions: { value: Locale; label: string }[] = [
   { value: 'zh', label: '中文' },
   { value: 'en', label: 'English' },
 ]
 
-// 主题选项
 const themeOptions: { value: ThemeMode; key: 'dark' | 'light' | 'system' }[] = [
   { value: 'dark', key: 'dark' },
   { value: 'light', key: 'light' },
   { value: 'system', key: 'system' },
 ]
 
-// === Agent 配置 ===
+type TabId = 'provider' | 'tools' | 'audit'
+const activeTab = ref<TabId>('provider')
+
+const tabs = computed<{ id: TabId; label: string }[]>(() => [
+  { id: 'provider', label: t('providerTab') },
+  { id: 'tools', label: t('toolPermTab') },
+  { id: 'audit', label: t('auditLogTab') },
+])
+
 const apiKey = ref('')
 const apiKeySet = ref(false)
 const apiKeyLast4 = ref('')
@@ -35,14 +44,13 @@ const toolEnabled = ref(true)
 const contextBudget = ref(24000)
 const maxAgentRounds = ref(20)
 const planMode = ref(true)
-const execEnabled = ref(false)
 const webSearchKey = ref('')
 const webSearchKeySet = ref(false)
 const webSearchKeyLast4 = ref('')
+const toolFlags = ref<Record<string, boolean>>({})
 const saving = ref(false)
 const savedHint = ref(false)
 
-// 供应商 + 模型选择（预设下拉 + 自定义输入双模式）
 const providerId = ref('deepseek')
 const modelCustom = ref(false)
 
@@ -68,15 +76,14 @@ function onProviderChange() {
     model.value = p.defaultModel
     modelCustom.value = false
   }
-  // 选择「自定义」时保留当前 baseUrl/model，由用户手动填写
 }
 
 const apiKeyPlaceholder = computed(() =>
-  apiKeySet.value ? `sk-...（已配置 ****${apiKeyLast4.value}，留空不修改）` : 'sk-...',
+  apiKeySet.value ? 'sk-...（已配置 ****' + apiKeyLast4.value + '，留空不修改）' : 'sk-...',
 )
 const webSearchKeyPlaceholder = computed(() =>
   webSearchKeySet.value
-    ? `tvly-...（已配置 ****${webSearchKeyLast4.value}，留空不修改）`
+    ? 'tvly-...（已配置 ****' + webSearchKeyLast4.value + '，留空不修改）'
     : 'tvly-...（Tavily）',
 )
 
@@ -87,6 +94,27 @@ function selectLocale(l: Locale) {
 function selectTheme(theme: ThemeMode) {
   settings.setTheme(theme)
 }
+
+const HIGH_RISK_TOOLS = new Set(['exec', 'fs_write', 'fs_delete', 'clipboard_write', 'notify'])
+const toolList = agentTools.map((tl) => ({
+  name: tl.name,
+  description: tl.description,
+  highRisk: HIGH_RISK_TOOLS.has(tl.name),
+}))
+
+const auditLogs = ref<AuditEntry[]>([])
+const auditFilter = ref('')
+const auditLoading = ref(false)
+
+const filteredAuditLogs = computed(() => {
+  const kw = auditFilter.value.trim().toLowerCase()
+  if (!kw) return auditLogs.value
+  return auditLogs.value.filter((e) =>
+    [e.toolName, e.sessionId, e.params, e.result, e.timestamp].some((s) =>
+      (s ?? '').toLowerCase().includes(kw),
+    ),
+  )
+})
 
 async function loadAgentConfig() {
   if (!isTauri) return
@@ -109,9 +137,9 @@ async function loadAgentConfig() {
     contextBudget.value = cfg.contextBudget
     maxAgentRounds.value = cfg.maxAgentRounds
     planMode.value = cfg.planMode
-    execEnabled.value = cfg.execEnabled
     webSearchKeySet.value = cfg.webSearchKeySet
     webSearchKeyLast4.value = cfg.webSearchKeyLast4
+    toolFlags.value = { ...(cfg.toolFlags ?? {}) }
   } catch {
     /* noop */
   }
@@ -131,8 +159,9 @@ async function saveAgentConfig() {
       contextBudget: contextBudget.value,
       maxAgentRounds: maxAgentRounds.value,
       planMode: planMode.value,
-      execEnabled: execEnabled.value,
+      execEnabled: toolFlags.value['exec'] ?? false,
       webSearchKey: webSearchKey.value.trim() || undefined,
+      toolFlags: { ...toolFlags.value },
     })
     apiKey.value = ''
     webSearchKey.value = ''
@@ -140,6 +169,7 @@ async function saveAgentConfig() {
     apiKeyLast4.value = cfg.apiKeyLast4
     webSearchKeySet.value = cfg.webSearchKeySet
     webSearchKeyLast4.value = cfg.webSearchKeyLast4
+    toolFlags.value = { ...(cfg.toolFlags ?? {}) }
     savedHint.value = true
     setTimeout(() => {
       savedHint.value = false
@@ -151,8 +181,43 @@ async function saveAgentConfig() {
   }
 }
 
+async function loadAuditLogs() {
+  if (!isTauri) return
+  auditLoading.value = true
+  try {
+    auditLogs.value = await invoke<AuditEntry[]>('agent_get_audit_logs', { limit: 200 })
+  } catch {
+    auditLogs.value = []
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+async function exportAudit(format: 'csv' | 'txt') {
+  if (!isTauri) return
+  try {
+    const content = await invoke<string>('agent_export_audit_logs', { format })
+    const blob = new Blob([content], {
+      type: format === 'csv' ? 'text/csv;charset=utf-8' : 'text/plain;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'audit.' + format
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    /* noop */
+  }
+}
+
+function shortId(id: string): string {
+  return id.length > 12 ? id.slice(0, 12) + '…' : id
+}
+
 onMounted(() => {
   void loadAgentConfig()
+  void loadAuditLogs()
 })
 </script>
 
@@ -192,31 +257,29 @@ onMounted(() => {
       </div>
     </div>
 
-    <div class="settings-section">
+    <div class="tab-nav">
+      <button
+        v-for="tab in tabs"
+        :key="tab.id"
+        class="tab-btn"
+        :class="{ active: activeTab === tab.id }"
+        @click="activeTab = tab.id"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <div v-if="activeTab === 'provider'" class="settings-section">
       <div class="section-label">{{ t('agentSection') }}</div>
       <div class="form">
         <label class="field">
           <span class="field-label">{{ t('apiKey') }}</span>
-          <input
-            v-model="apiKey"
-            type="password"
-            class="text-input"
-            :placeholder="apiKeyPlaceholder"
-            autocomplete="off"
-            spellcheck="false"
-          />
+          <input v-model="apiKey" type="password" class="text-input" :placeholder="apiKeyPlaceholder" autocomplete="off" spellcheck="false" />
         </label>
 
         <label class="field">
           <span class="field-label">{{ t('webSearchKey') }}</span>
-          <input
-            v-model="webSearchKey"
-            type="password"
-            class="text-input"
-            :placeholder="webSearchKeyPlaceholder"
-            autocomplete="off"
-            spellcheck="false"
-          />
+          <input v-model="webSearchKey" type="password" class="text-input" :placeholder="webSearchKeyPlaceholder" autocomplete="off" spellcheck="false" />
         </label>
 
         <label class="field">
@@ -235,27 +298,11 @@ onMounted(() => {
         <label class="field">
           <span class="field-label">{{ t('model') }}</span>
           <div class="model-row">
-            <select
-              v-if="!modelCustom && activePreset"
-              v-model="model"
-              class="text-input select model-select"
-            >
+            <select v-if="!modelCustom && activePreset" v-model="model" class="text-input select model-select">
               <option v-for="m in presetModels" :key="m" :value="m">{{ m }}</option>
             </select>
-            <input
-              v-else
-              v-model="model"
-              type="text"
-              class="text-input"
-              placeholder="gpt-4o / deepseek-chat"
-              spellcheck="false"
-            />
-            <button
-              type="button"
-              class="mini-btn"
-              :title="modelCustom ? t('model') : t('customModel')"
-              @click="modelCustom = !modelCustom"
-            >
+            <input v-else v-model="model" type="text" class="text-input" placeholder="gpt-4o / deepseek-chat" spellcheck="false" />
+            <button type="button" class="mini-btn" :title="modelCustom ? t('model') : t('customModel')" @click="modelCustom = !modelCustom">
               {{ modelCustom ? '▾' : '✏️' }}
             </button>
           </div>
@@ -265,19 +312,12 @@ onMounted(() => {
           <span class="cap-chip" :class="{ on: caps.toolCalls }">🛠 {{ t('modelCapToolCalls') }}</span>
           <span class="cap-chip" :class="{ on: caps.streaming }">⚡ {{ t('modelCapStreaming') }}</span>
           <span class="cap-chip" :class="{ on: caps.reasoning }">💭 {{ t('modelCapReasoning') }}</span>
-          <span class="cap-chip">
-            📐 {{ caps.contextWindow >= 1000 ? Math.round(caps.contextWindow / 1000) + 'k' : caps.contextWindow }} {{ t('modelCapContext') }}
-          </span>
+          <span class="cap-chip">📐 {{ caps.contextWindow >= 1000 ? Math.round(caps.contextWindow / 1000) + 'k' : caps.contextWindow }} {{ t('modelCapContext') }}</span>
         </div>
 
         <label class="field">
           <span class="field-label">{{ t('systemPrompt') }}</span>
-          <textarea
-            v-model="systemPrompt"
-            class="text-input area"
-            rows="3"
-            spellcheck="false"
-          />
+          <textarea v-model="systemPrompt" class="text-input area" rows="3" spellcheck="false" />
         </label>
 
         <div class="field row">
@@ -290,26 +330,12 @@ onMounted(() => {
 
         <label class="field">
           <span class="field-label">{{ t('contextBudget') }}</span>
-          <input
-            v-model.number="contextBudget"
-            type="number"
-            min="4000"
-            max="60000"
-            step="1000"
-            class="text-input"
-          />
+          <input v-model.number="contextBudget" type="number" min="4000" max="60000" step="1000" class="text-input" />
         </label>
 
         <label class="field">
           <span class="field-label">{{ t('maxAgentRounds') }}</span>
-          <input
-            v-model.number="maxAgentRounds"
-            type="number"
-            min="1"
-            max="100"
-            step="1"
-            class="text-input"
-          />
+          <input v-model.number="maxAgentRounds" type="number" min="1" max="100" step="1" class="text-input" />
         </label>
 
         <div class="field row">
@@ -320,20 +346,62 @@ onMounted(() => {
           </label>
         </div>
 
-        <div class="field row">
-          <span class="field-label">{{ t('execEnabled') }}</span>
-          <label class="switch">
-            <input v-model="execEnabled" type="checkbox" />
-            <span class="slider"></span>
-          </label>
-        </div>
-        <p v-if="execEnabled" style="color:#d97706;font-size:12px;margin:2px 0 10px;">{{ t('execEnabledWarning') }}</p>
-
         <div class="form-actions">
           <button class="save-btn" :disabled="saving" @click="saveAgentConfig">
             {{ saving ? t('saving') : t('save') }}
           </button>
           <span v-if="savedHint" class="saved-hint">{{ t('saved') }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="activeTab === 'tools'" class="settings-section">
+      <div class="section-label">{{ t('toolPermTab') }}</div>
+      <p class="hint-line">{{ t('toolPermHint') }}</p>
+      <div class="tool-perm-list">
+        <div v-for="tool in toolList" :key="tool.name" class="tool-perm-item">
+          <div class="tool-perm-info">
+            <div class="tool-perm-title">
+              <span class="tool-perm-name">{{ tool.name }}</span>
+              <span v-if="tool.highRisk" class="high-risk-tag" :title="t('auditHighRisk')">⚠️</span>
+            </div>
+            <span class="tool-perm-desc">{{ tool.description }}</span>
+          </div>
+          <label class="switch">
+            <input v-model="toolFlags[tool.name]" type="checkbox" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="save-btn" :disabled="saving" @click="saveAgentConfig">
+          {{ saving ? t('saving') : t('save') }}
+        </button>
+        <span v-if="savedHint" class="saved-hint">{{ t('saved') }}</span>
+      </div>
+    </div>
+
+    <div v-else class="settings-section">
+      <div class="section-label">{{ t('auditLogTab') }}</div>
+      <div class="audit-controls">
+        <input v-model="auditFilter" type="text" class="text-input audit-filter" :placeholder="t('auditKeyword')" spellcheck="false" />
+        <button class="mini-btn wide" :disabled="auditLoading" @click="loadAuditLogs">{{ t('auditRefresh') }}</button>
+        <button class="mini-btn wide" @click="exportAudit('csv')">{{ t('auditExportCsv') }}</button>
+        <button class="mini-btn wide" @click="exportAudit('txt')">{{ t('auditExportTxt') }}</button>
+      </div>
+      <div class="audit-list">
+        <p v-if="!filteredAuditLogs.length" class="hint-line">{{ t('auditEmpty') }}</p>
+        <div v-for="(e, i) in filteredAuditLogs" :key="i" class="audit-item">
+          <div class="audit-line1">
+            <span class="audit-time">{{ e.timestamp }}</span>
+            <span class="audit-tool">{{ e.toolName }}</span>
+            <span v-if="e.userConfirm" class="audit-confirm">{{ t('auditConfirm') }}</span>
+          </div>
+          <div class="audit-line2">
+            <span class="audit-session">{{ t('auditSession') }}: {{ shortId(e.sessionId) }}</span>
+            <span class="audit-params">{{ t('auditParams') }}: {{ e.params }}</span>
+          </div>
+          <div class="audit-line3">{{ t('auditResult') }}: {{ e.result }}</div>
         </div>
       </div>
     </div>
@@ -409,7 +477,38 @@ onMounted(() => {
   border: 1px solid var(--accent-border);
 }
 
-/* === Agent 表单 === */
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 3px;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--text-bright);
+}
+
+.tab-btn.active {
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-border);
+}
+
 .form {
   display: flex;
   flex-direction: column;
@@ -431,6 +530,12 @@ onMounted(() => {
 .field-label {
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.hint-line {
+  margin: 2px 0 8px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .text-input {
@@ -465,9 +570,7 @@ onMounted(() => {
 }
 
 .mini-btn {
-  width: 28px;
-  height: 30px;
-  flex-shrink: 0;
+  padding: 5px 8px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background: var(--input-bg);
@@ -479,6 +582,10 @@ onMounted(() => {
 .mini-btn:hover {
   color: var(--text-bright);
   border-color: var(--accent-border);
+}
+
+.mini-btn.wide {
+  flex-shrink: 0;
 }
 
 .caps-row {
@@ -506,6 +613,130 @@ onMounted(() => {
 .text-input.area {
   resize: vertical;
   min-height: 56px;
+}
+
+.tool-perm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-perm-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--input-bg);
+}
+
+.tool-perm-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-perm-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tool-perm-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  font-family: monospace;
+}
+
+.high-risk-tag {
+  font-size: 11px;
+}
+
+.tool-perm-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.audit-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.audit-filter {
+  flex: 1;
+  min-width: 0;
+}
+
+.audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audit-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--input-bg);
+}
+
+.audit-line1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.audit-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.audit-tool {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-bright);
+  font-family: monospace;
+}
+
+.audit-confirm {
+  font-size: 10px;
+  color: #16a34a;
+  border: 1px solid #16a34a;
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.audit-line2 {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.audit-session {
+  font-family: monospace;
+}
+
+.audit-params {
+  word-break: break-all;
+}
+
+.audit-line3 {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+  word-break: break-all;
 }
 
 .switch {
@@ -558,7 +789,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 10px;
 }
 
 .save-btn {

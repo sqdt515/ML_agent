@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import type { ChatMessage, ChatSession, AgentConfig, ToolCall, ChatRole, AgentStep, AgentStepStatus, AgentPlan } from '@/agent/types'
 import { MAX_AGENT_ROUNDS } from '@/agent/types'
 import { buildContext, buildSystemPrompt, buildPlanContext } from '@/agent/context'
-import { agentTools, toolsToPayload, findTool, isMetaTool } from '@/agent/tools'
+import { agentTools, toolsToPayload, findTool, isMetaTool, setAuditContext } from '@/agent/tools'
 import { createChatChannel, streamChat, toOpenAIMessages } from '@/agent/engine'
 import { invoke } from '@tauri-apps/api/core'
 import { loadConfig } from '@/agent/config'
@@ -289,7 +289,7 @@ export const useAgentStore = defineStore('agent', () => {
       return
     }
 
-    const tools = cfg.toolEnabled ? toolsToPayload(agentTools, cfg.execEnabled, cfg.webSearchKeySet) : []
+    const tools = cfg.toolEnabled ? toolsToPayload(agentTools, cfg.toolFlags ?? {}) : []
     const maxRounds = cfg.maxAgentRounds || MAX_AGENT_ROUNDS
     const getSession = (): ChatSession | null => sessions.value.find((x) => x.id === sessionId) ?? null
 
@@ -446,10 +446,13 @@ export const useAgentStore = defineStore('agent', () => {
         break
       }
 
+      // 设置高危工具审计上下文：会话 id + 计划是否已确认
+      setAuditContext(sessionId, s3.plan?.status === 'active')
+
       // 执行实工具并回填全部结果
       const realResults = await Promise.all(
         realCalls.map(async (tc) => {
-          const tool = findTool(tc.function.name, cfg.execEnabled, cfg.webSearchKeySet)
+          const tool = findTool(tc.function.name, cfg.toolFlags ?? {})
           if (!tool) {
             return { call: tc, content: JSON.stringify({ ok: false, error: `未知工具 ${tc.function.name}` }) }
           }

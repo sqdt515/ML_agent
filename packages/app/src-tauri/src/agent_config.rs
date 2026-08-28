@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -15,6 +16,39 @@ const DEFAULT_SYSTEM_PROMPT: &str = "你是 New AI，一个运行在用户桌面
 调用工具前请先用一句话说明你要做什么；工具结果返回后，用简洁的语言总结给用户。\
 不要编造工具不存在的功能，工具执行失败时如实告知。";
 
+/// 全部实工具名（与前端 agentTools 一一对应）
+pub const ALL_TOOL_NAMES: &[&str] = &[
+    "pet_show",
+    "pet_hide",
+    "open_url",
+    "system_info",
+    "get_time",
+    "note_create",
+    "note_list",
+    "fs_list",
+    "fs_read",
+    "notify",
+    "clipboard_read",
+    "clipboard_write",
+    "fs_write",
+    "fs_delete",
+    "exec",
+    "web_search",
+];
+
+/// 工具默认启用状态：exec 默认关，其余默认开
+pub fn default_tool_enabled(name: &str) -> bool {
+    name != "exec"
+}
+
+/// 解析某工具是否启用（tool_flags 未显式设置时回退默认值）
+pub fn tool_enabled_by_name(name: &str, flags: &HashMap<String, bool>) -> bool {
+    flags
+        .get(name)
+        .copied()
+        .unwrap_or_else(|| default_tool_enabled(name))
+}
+
 /// Agent 配置（持久化在 app_config_dir/agent.json）
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -29,6 +63,7 @@ pub struct AgentConfig {
     pub plan_mode: bool,
     pub exec_enabled: bool,
     pub web_search_key: String,
+    pub tool_flags: HashMap<String, bool>,
 }
 
 impl Default for AgentConfig {
@@ -44,6 +79,7 @@ impl Default for AgentConfig {
             plan_mode: true,
             exec_enabled: false,
             web_search_key: String::new(),
+            tool_flags: HashMap::new(),
         }
     }
 }
@@ -90,6 +126,7 @@ pub struct AgentConfigView {
     pub exec_enabled: bool,
     pub web_search_key_set: bool,
     pub web_search_key_last4: String,
+    pub tool_flags: HashMap<String, bool>,
 }
 
 /// 前端提交的配置（可选字段，None 表示保持原值；api_key 为空字符串表示不修改）
@@ -106,6 +143,7 @@ pub struct AgentConfigInput {
     pub plan_mode: Option<bool>,
     pub exec_enabled: Option<bool>,
     pub web_search_key: Option<String>,
+    pub tool_flags: Option<HashMap<String, bool>>,
 }
 
 fn last4(s: &str) -> String {
@@ -130,6 +168,10 @@ pub fn view(config: &AgentConfig) -> AgentConfigView {
         exec_enabled: config.exec_enabled,
         web_search_key_set: !config.web_search_key.is_empty(),
         web_search_key_last4: last4(&config.web_search_key),
+        tool_flags: ALL_TOOL_NAMES
+            .iter()
+            .map(|n| (n.to_string(), tool_enabled_by_name(n, &config.tool_flags)))
+            .collect(),
     }
 }
 
@@ -176,6 +218,9 @@ pub fn apply(app: &AppHandle, input: AgentConfigInput) -> Result<AgentConfigView
         if !trimmed.is_empty() {
             config.web_search_key = trimmed.to_string();
         }
+    }
+    if let Some(flags) = input.tool_flags {
+        config.tool_flags = flags;
     }
     config.save(app)?;
     Ok(view(&config))
@@ -268,5 +313,34 @@ mod tests {
         assert_eq!(input.max_agent_rounds, Some(7));
         assert_eq!(input.plan_mode, Some(false));
         assert_eq!(input.context_budget, Some(9999));
+    }
+
+    #[test]
+    fn default_tool_enabled_only_exec_off() {
+        assert!(default_tool_enabled("fs_read"));
+        assert!(default_tool_enabled("fs_write"));
+        assert!(default_tool_enabled("web_search"));
+        assert!(!default_tool_enabled("exec"));
+    }
+
+    #[test]
+    fn tool_enabled_by_name_respects_flags() {
+        let mut flags = HashMap::new();
+        flags.insert("fs_write".to_string(), false);
+        flags.insert("exec".to_string(), true);
+        assert!(tool_enabled_by_name("fs_read", &flags));
+        assert!(!tool_enabled_by_name("fs_write", &flags));
+        assert!(tool_enabled_by_name("exec", &flags));
+        assert!(!tool_enabled_by_name("exec", &HashMap::new()));
+    }
+
+    #[test]
+    fn view_fills_all_tool_flags() {
+        let c = AgentConfig::default();
+        let v = view(&c);
+        assert_eq!(v.tool_flags.len(), ALL_TOOL_NAMES.len());
+        assert_eq!(v.tool_flags.get("exec"), Some(&false));
+        assert_eq!(v.tool_flags.get("fs_read"), Some(&true));
+        assert_eq!(v.tool_flags.get("web_search"), Some(&true));
     }
 }

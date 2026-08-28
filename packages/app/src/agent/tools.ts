@@ -72,9 +72,30 @@ export function isMetaTool(name: string): boolean {
   return metaTools.some((t) => t.name === name)
 }
 
+/** 需要审计的高危工具命令（写入 audit.log） */
+const AUDITED_CMDS = new Set([
+  'agent_tool_exec',
+  'agent_tool_fs_write',
+  'agent_tool_fs_delete',
+  'agent_tool_clipboard_write',
+  'agent_tool_notify',
+])
+
+/** 审计上下文（由 store 在每轮工具执行前设置） */
+let currentSessionId = ''
+let currentUserConfirm = false
+
+export function setAuditContext(sessionId: string, userConfirm: boolean): void {
+  currentSessionId = sessionId
+  currentUserConfirm = userConfirm
+}
+
 async function invokeTool<T>(cmd: string, args: Record<string, unknown> = {}): Promise<string> {
+  const finalArgs = AUDITED_CMDS.has(cmd)
+    ? { ...args, sessionId: currentSessionId || null, userConfirm: currentUserConfirm }
+    : args
   try {
-    const res = await invoke<T>(cmd, args)
+    const res = await invoke<T>(cmd, finalArgs)
     return JSON.stringify(res ?? { ok: true })
   } catch (e) {
     return JSON.stringify({ ok: false, error: String(e) })
@@ -235,12 +256,8 @@ export const agentTools: AgentTool[] = [
   },
 ]
 
-export function toolsToPayload(tools: AgentTool[], execEnabled = false, webSearchEnabled = false): Array<Record<string, unknown>> {
-  const active = tools.filter((t) => {
-    if (t.name === 'exec' && !execEnabled) return false
-    if (t.name === 'web_search' && !webSearchEnabled) return false
-    return true
-  })
+export function toolsToPayload(tools: AgentTool[], flags: Record<string, boolean> = {}): Array<Record<string, unknown>> {
+  const active = tools.filter((t) => flags[t.name] !== false)
   const schemas: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [
     ...active,
     ...metaTools,
@@ -251,10 +268,9 @@ export function toolsToPayload(tools: AgentTool[], execEnabled = false, webSearc
   }))
 }
 
-export function findTool(name: string, execEnabled = true, webSearchEnabled = true): AgentTool | undefined {
+export function findTool(name: string, flags: Record<string, boolean> = {}): AgentTool | undefined {
   const tool = agentTools.find((t) => t.name === name)
   if (!tool) return undefined
-  if (tool.name === 'exec' && !execEnabled) return undefined
-  if (tool.name === 'web_search' && !webSearchEnabled) return undefined
+  if (flags[name] === false) return undefined
   return tool
 }

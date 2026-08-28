@@ -22,6 +22,25 @@ fn ok_json(value: serde_json::Value) -> Result<String, String> {
     serde_json::to_string(&value).map_err(|e| e.to_string())
 }
 
+/// 工具执行后写审计日志（成功/失败摘要）
+fn audit_result(
+    app: &AppHandle,
+    tool: &str,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
+    params: serde_json::Value,
+    result: &Result<String, String>,
+) {
+    let sid = session_id.unwrap_or_default();
+    let confirm = user_confirm.unwrap_or(false);
+    let params_json = serde_json::to_string(&params).unwrap_or_default();
+    let summary = match result {
+        Ok(_) => "成功".to_string(),
+        Err(e) => format!("失败: {e}"),
+    };
+    crate::audit::append(app, tool, &sid, &params_json, &summary, confirm);
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -328,18 +347,34 @@ pub fn agent_tool_fs_read(app: AppHandle, path: String) -> Result<String, String
 // === 系统通知 ===
 
 #[tauri::command]
-pub fn agent_tool_notify(app: AppHandle, text: String) -> Result<String, String> {
-    let trimmed = text.trim().to_string();
-    if trimmed.is_empty() {
-        return Err("通知内容不能为空".to_string());
-    }
-    app.notification()
-        .builder()
-        .title("New AI")
-        .body(&trimmed)
-        .show()
-        .map_err(|e| format!("发送通知失败: {e}"))?;
-    ok_json(serde_json::json!({ "ok": true, "result": "通知已发送" }))
+pub fn agent_tool_notify(
+    app: AppHandle,
+    text: String,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
+) -> Result<String, String> {
+    let result = (|| -> Result<String, String> {
+        let trimmed = text.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("通知内容不能为空".to_string());
+        }
+        app.notification()
+            .builder()
+            .title("New AI")
+            .body(&trimmed)
+            .show()
+            .map_err(|e| format!("发送通知失败: {e}"))?;
+        ok_json(serde_json::json!({ "ok": true, "result": "通知已发送" }))
+    })();
+    audit_result(
+        &app,
+        "notify",
+        session_id,
+        user_confirm,
+        serde_json::json!({ "text": text.clone() }),
+        &result,
+    );
+    result
 }
 
 // === 剪贴板 ===
@@ -352,11 +387,27 @@ pub fn agent_tool_clipboard_read() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn agent_tool_clipboard_write(text: String) -> Result<String, String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| format!("打开剪贴板失败: {e}"))?;
-    cb.set_text(text.clone())
-        .map_err(|e| format!("写入剪贴板失败: {e}"))?;
-    ok_json(serde_json::json!({ "ok": true, "result": "已写入剪贴板" }))
+pub fn agent_tool_clipboard_write(
+    app: AppHandle,
+    text: String,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
+) -> Result<String, String> {
+    let result = (|| -> Result<String, String> {
+        let mut cb = arboard::Clipboard::new().map_err(|e| format!("打开剪贴板失败: {e}"))?;
+        cb.set_text(text.clone())
+            .map_err(|e| format!("写入剪贴板失败: {e}"))?;
+        ok_json(serde_json::json!({ "ok": true, "result": "已写入剪贴板" }))
+    })();
+    audit_result(
+        &app,
+        "clipboard_write",
+        session_id,
+        user_confirm,
+        serde_json::json!({ "text": text.clone() }),
+        &result,
+    );
+    result
 }
 
 // === 文件写入/删除（中危：限制在应用专属工作目录） ===
@@ -418,30 +469,63 @@ pub fn agent_tool_fs_write(
     app: AppHandle,
     path: String,
     content: String,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
 ) -> Result<String, String> {
-    if content.len() > 1024 * 1024 {
-        return Err("内容过大（>1MB）".to_string());
-    }
-    let target = resolve_in_workspace(&app, &path)?;
-    std::fs::write(&target, content.as_bytes()).map_err(|e| format!("写入失败: {e}"))?;
-    ok_json(serde_json::json!({ "ok": true, "result": "已写入", "path": display_path(&target) }))
+    let result = (|| -> Result<String, String> {
+        if content.len() > 1024 * 1024 {
+            return Err("内容过大（>1MB）".to_string());
+        }
+        let target = resolve_in_workspace(&app, &path)?;
+        std::fs::write(&target, content.as_bytes()).map_err(|e| format!("写入失败: {e}"))?;
+        ok_json(
+            serde_json::json!({ "ok": true, "result": "已写入", "path": display_path(&target) }),
+        )
+    })();
+    audit_result(
+        &app,
+        "fs_write",
+        session_id,
+        user_confirm,
+        serde_json::json!({ "path": path.clone() }),
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
-pub fn agent_tool_fs_delete(app: AppHandle, path: String) -> Result<String, String> {
-    let target = resolve_in_workspace(&app, &path)?;
-    let meta = std::fs::metadata(&target).map_err(|e| format!("文件不存在或无法访问: {e}"))?;
-    if meta.is_dir() {
-        return Err("仅支持删除文件，不删除目录".to_string());
-    }
-    std::fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))?;
-    ok_json(serde_json::json!({ "ok": true, "result": "已删除", "path": display_path(&target) }))
+pub fn agent_tool_fs_delete(
+    app: AppHandle,
+    path: String,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
+) -> Result<String, String> {
+    let result = (|| -> Result<String, String> {
+        let target = resolve_in_workspace(&app, &path)?;
+        let meta = std::fs::metadata(&target).map_err(|e| format!("文件不存在或无法访问: {e}"))?;
+        if meta.is_dir() {
+            return Err("仅支持删除文件，不删除目录".to_string());
+        }
+        std::fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))?;
+        ok_json(
+            serde_json::json!({ "ok": true, "result": "已删除", "path": display_path(&target) }),
+        )
+    })();
+    audit_result(
+        &app,
+        "fs_delete",
+        session_id,
+        user_confirm,
+        serde_json::json!({ "path": path.clone() }),
+        &result,
+    );
+    result
 }
 
 // === 命令执行（高危：不做命令白名单，仅超时与输出截断防护） ===
 
 #[tauri::command]
-pub fn agent_tool_exec(cmd: String) -> Result<String, String> {
+fn exec_impl(cmd: &str) -> Result<String, String> {
     let trimmed = cmd.trim().to_string();
     if trimmed.is_empty() {
         return Err("命令不能为空".to_string());
@@ -461,9 +545,14 @@ pub fn agent_tool_exec(cmd: String) -> Result<String, String> {
                 if std::time::Instant::now() > deadline {
                     let pid = child.id();
                     // /T 杀整棵进程树（cmd + 子进程），/F 强制，确保管道写端全部关闭
+                    // fire-and-forget：受限环境下 taskkill 自身可能卡住，不等待其返回
                     let _ = std::process::Command::new("taskkill")
                         .args(["/PID", &pid.to_string(), "/T", "/F"])
-                        .status();
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                    // 兜底：直接 kill 主进程，确保 wait 不会无限阻塞
+                    let _ = child.kill();
                     let _ = child.wait();
                     return Err("命令执行超时（30 秒），已终止".to_string());
                 }
@@ -495,6 +584,26 @@ pub fn agent_tool_exec(cmd: String) -> Result<String, String> {
         "stdout_truncated": so_trunc,
         "stderr_truncated": se_trunc,
     }))
+}
+
+#[tauri::command]
+pub fn agent_tool_exec(
+    app: AppHandle,
+    cmd: String,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
+) -> Result<String, String> {
+    let cmd_for_audit = cmd.clone();
+    let result = exec_impl(&cmd);
+    audit_result(
+        &app,
+        "exec",
+        session_id,
+        user_confirm,
+        serde_json::json!({ "cmd": cmd_for_audit }),
+        &result,
+    );
+    result
 }
 
 // === 联网搜索（Tavily） ===
@@ -891,7 +1000,7 @@ mod tests {
 
     #[test]
     fn exec_echo_returns_stdout() {
-        let out = agent_tool_exec("echo hello_m4_test".to_string()).unwrap();
+        let out = exec_impl("echo hello_m4_test").unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["ok"], true, "echo 应成功: {out}");
         assert!(
@@ -903,13 +1012,13 @@ mod tests {
 
     #[test]
     fn exec_empty_cmd_errors() {
-        assert!(agent_tool_exec("".to_string()).is_err());
-        assert!(agent_tool_exec("   ".to_string()).is_err());
+        assert!(exec_impl("").is_err());
+        assert!(exec_impl("   ").is_err());
     }
 
     #[test]
     fn exec_missing_command_returns_nonzero() {
-        let out = agent_tool_exec("nonexistent_cmd_xyz_12345".to_string()).unwrap();
+        let out = exec_impl("nonexistent_cmd_xyz_12345").unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["ok"], false);
         assert_ne!(v["exit_code"], 0);
@@ -917,21 +1026,21 @@ mod tests {
 
     #[test]
     fn exec_preserves_exit_code() {
-        let out = agent_tool_exec("exit /b 5".to_string()).unwrap();
+        let out = exec_impl("exit /b 5").unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["exit_code"], 5);
     }
 
     #[test]
     fn exec_truncates_long_output() {
-        let out = agent_tool_exec("for /L %i in (1,1,3000) do @echo xxxxxxxx".to_string()).unwrap();
+        let out = exec_impl("for /L %i in (1,1,3000) do @echo xxxxxxxx").unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["stdout_truncated"], true, "3000 行输出应触发截断: {out}");
     }
 
     #[test]
     fn exec_utf8_output() {
-        let out = agent_tool_exec("echo 中文测试".to_string()).unwrap();
+        let out = exec_impl("echo 中文测试").unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         let stdout = v["stdout"].as_str().unwrap_or("");
         // cmd 默认 GBK 编码，echo 中文可能乱码；只断言无 panic 且 stdout 非空
@@ -944,7 +1053,7 @@ mod tests {
     #[test]
     fn exec_times_out() {
         let start = std::time::Instant::now();
-        let r = agent_tool_exec("ping -t 127.0.0.1".to_string());
+        let r = exec_impl("ping -t 127.0.0.1");
         let elapsed = start.elapsed();
         assert!(r.is_err(), "无限 ping 应触发超时返回 Err");
         assert!(r.unwrap_err().contains("超时"), "错误信息应含「超时」");

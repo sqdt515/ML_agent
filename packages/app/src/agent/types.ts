@@ -74,6 +74,18 @@ export interface AgentConfig {
   execEnabled: boolean
   webSearchKeySet: boolean
   webSearchKeyLast4: string
+  toolFlags: Record<string, boolean>
+}
+
+// === 审计日志 ===
+
+export interface AuditEntry {
+  timestamp: string
+  toolName: string
+  sessionId: string
+  params: string
+  result: string
+  userConfirm: boolean
 }
 
 // === 自治执行计划（层次 A） ===

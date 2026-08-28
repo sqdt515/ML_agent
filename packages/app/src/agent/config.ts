@@ -12,6 +12,7 @@ export interface AgentConfigInput {
   planMode?: boolean
   execEnabled?: boolean
   webSearchKey?: string
+  toolFlags?: Record<string, boolean>
 }
 
 export async function loadConfig(): Promise<AgentConfig> {

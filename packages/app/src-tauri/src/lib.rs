@@ -1,5 +1,6 @@
 mod agent_config;
 mod agent_tools;
+mod audit;
 mod commands;
 mod llm;
 mod tray;
@@ -36,6 +37,8 @@ pub fn run() {
             agent_tools::agent_tool_fs_delete,
             agent_tools::agent_tool_exec,
             agent_tools::agent_tool_web_search,
+            audit::agent_get_audit_logs,
+            audit::agent_export_audit_logs,
         ])
         .setup(|app| {
             println!("New AI started");
