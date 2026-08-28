@@ -1,27 +1,65 @@
-# New AI
+# New AI — 桌面 AI Agent 宠物
 
-基于 Tauri 2 + Vue 3 的桌面宠物应用基础版本，复用自 AI 步步（AIbubu）项目。
+[![CI](https://github.com/YOUR_GITHUB_USERNAME/new-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/new-ai/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+基于 **Tauri 2（Rust + Vue 3）** 的桌面宠物形态 AI Agent：双击桌宠唤起对话窗口，接入 DeepSeek 等 OpenAI 兼容接口，支持 SSE 流式对话、工具调用、计划式自主执行与审计日志。基础桌面壳复用自开源项目 [AIbubu（AI 步步）](https://github.com/funAgent/ai-bubu)，Agent 能力为独立实现。
+
+## 功能特性
+
+- **流式对话**：SSE 流式输出、多轮会话持久化（localStorage 自动恢复）、中英双语、明暗主题
+- **工具调用**：16 个实工具 + 3 个元工具——桌宠显隐、打开链接、系统信息、时间、便签、系统通知、剪贴板读写、受限文件读写/删除、命令执行（默认关闭）、Tavily 联网搜索
+- **计划式自主执行**：`create_plan → 逐步 update_step → finish`，计划需用户确认后才转入执行
+- **多供应商**：内置 DeepSeek / OpenAI / Moonshot / Qwen / GLM / Ollama 预设，支持 reasoner 模型的 `reasoning_content` 流式输出
+- **上下文预算**：默认 24K token、上限 60K，超限自动省略早期消息
+- **逐工具权限**：设置面板中按工具粒度启用/禁用（高危 `exec` 默认关闭）
+- **审计日志**：高危工具调用全部写入 JSONL 审计日志（1MB 轮转），支持关键字过滤与 CSV/TXT 导出
+
+## 架构与安全设计
+
+```mermaid
+flowchart LR
+    subgraph FE["渲染进程（Vue 3 + Pinia）"]
+        UI["AgentChat / SettingsPanel"]
+        STORE["agent store<br/>工具循环 / 上下文组装"]
+    end
+    subgraph BE["Rust 后端（Tauri）"]
+        GW["llm.rs<br/>WinHTTP LLM 网关（SSE）"]
+        TOOLS["agent_tools.rs<br/>工具执行 + 沙箱限制"]
+        CFG["agent_config.rs<br/>配置持久化 + Key 脱敏"]
+        AUD["audit.rs<br/>JSONL 审计日志"]
+    end
+    API["OpenAI 兼容 API<br/>DeepSeek / GLM / Moonshot / ..."]
+
+    UI <--> STORE
+    STORE -- "invoke 工具调用" --> TOOLS
+    STORE -- "invoke 对话" --> GW
+    TOOLS --> AUD
+    GW -- "API Key 只在此出现" --> API
+```
+
+安全要点：
+
+- **API Key 隔离**：Key 仅存于 Rust 进程与本地配置文件（`app_config_dir/agent.json`），LLM 请求全部由 Rust 网关发起，前端只拿到"已设置 + 尾 4 位"的脱敏视图
+- **exec 三重防护**：默认关闭；开启后 30 秒超时强杀整棵进程树（`taskkill /T /F` + `child.kill` 兜底），输出超限截断
+- **文件工具沙箱**：`fs_write` / `fs_delete` 限制在应用专属工作目录内，`fs_read` 只读
+- **审计可追溯**：高危工具（exec / fs_write / fs_delete / clipboard_write / notify）调用落 JSONL 审计日志，参数与结果脱敏截断，可在设置面板查看/过滤/导出
+- **计划需确认**：计划模式下 Agent 的自主执行计划必须经用户确认（`awaiting_confirm → active`）才开始执行
 
 ## 技术栈
 
-- **桌面框架**：Tauri 2
-- **后端语言**：Rust
-- **前端框架**：Vue 3
-- **状态管理**：Pinia
-- **构建工具**：Vite
-- **官网站点**：Astro
+| 层 | 技术 |
+|---|---|
+| 桌面框架 | Tauri 2 |
+| 后端 | Rust（WinHTTP LLM 网关、JSONL 审计日志） |
+| 前端 | Vue 3.5 + Pinia 3 + VueUse 13 |
+| 构建 | Vite 6 + TypeScript 5.7（strict） |
+| 测试 | Vitest 4（前端）+ `cargo test`（Rust，55+ 用例） |
+| 官网 | Astro |
 
-## 前置条件
+## 快速开始
 
-- [Node.js](https://nodejs.org/) 22+
-- [pnpm](https://pnpm.io/) 9+
-- [Rust](https://www.rust-lang.org/)（stable 通道）
-  - 安装后通过 `rustup default stable` 切换到 stable
-  - Tauri 2 还需要各平台原生构建依赖，详见 [Tauri Prerequisites](https://tauri.app/start/prerequisites/)
-
-## 启动命令
-
-在项目根目录执行：
+前置条件：Node.js 22+、pnpm 10+、Rust stable（Tauri 原生依赖见 [Tauri Prerequisites](https://tauri.app/start/prerequisites/)），Windows 10/11。
 
 ```bash
 # 安装依赖
@@ -33,70 +71,45 @@ pnpm tauri dev
 # 仅启动前端 dev server
 pnpm dev
 
-# 启动官网开发服务器
-pnpm dev:site
+# 运行测试
+pnpm test          # 前端 Vitest
+cd packages/app/src-tauri && cargo test   # Rust
 ```
 
-## Agent 功能
-
-桌宠支持双击打开 Agent 聊天窗口，与 DeepSeek 等 OpenAI 兼容接口对话：
-
-- **入口**：双击桌宠打开 Agent 窗口；标题栏提供 最小化 / 隐藏 / 退出 按钮；托盘菜单可打开设置。
-- **配置**：在设置面板的 Agent 区填写 API Key、接口地址（默认 `https://api.deepseek.com`）、模型（`deepseek-chat` / `deepseek-reasoner`）、系统提示词、工具开关与上下文预算（默认 24K token，上限 60K）。
-- **能力**：流式输出、工具调用（显示/隐藏桌宠、打开链接、系统信息、时间、便签）、会话持久化（localStorage 自动恢复）。
-- **安全**：LLM 请求全部走后端 Rust 网关（绕过 CSP），API Key 只保存在本地配置文件（`app_config_dir/agent.json`），日志与前端不会打印明文。
+一键回归：`pwsh -File scripts/verify.ps1`（cargo test + 前端测试 + 类型检查）。
 
 ## 项目结构
 
 ```
 new_ai/
-├── package.json              # 根 workspace 配置
-├── pnpm-workspace.yaml       # pnpm workspace 定义
-├── .gitignore
-├── .prettierrc
-├── README.md
+├── scripts/                  # 回归脚本
 └── packages/
-    ├── app/                  # 桌面应用（Tauri + Vue 3）
-    │   ├── package.json
-    │   ├── vite.config.ts
-    │   ├── tsconfig.json
-    │   ├── index.html
-    │   ├── src/              # 前端源码
-    │   │   ├── main.ts
-    │   │   ├── App.vue
-    │   │   ├── vite-env.d.ts
-    │   │   ├── types/        # 类型定义
-    │   │   ├── stores/       # Pinia 状态（pet、settings）
-    │   │   ├── composables/  # 组合式函数（交互、窗口、i18n）
-    │   │   ├── i18n/         # 国际化文案（zh/en）
-    │   │   ├── pet/          # 宠物渲染（PetRenderer + SpriteRenderer）
-    │   │   ├── components/   # 通用组件（SettingsPanel）
-    │   │   ├── styles/       # 主题样式
-    │   │   └── utils/        # 工具函数（skin）
-    │   ├── public/skins/     # 宠物皮肤资源（skin.json + skin.png）
-    │   └── src-tauri/        # Rust 后端
-    │       ├── Cargo.toml
-    │       ├── build.rs
-    │       ├── tauri.conf.json
-    │       ├── capabilities/ # Tauri 权限配置
-    │       ├── icons/
-    │       └── src/          # Rust 源码（main、lib、tray）
+    ├── app/                  # 桌面应用
+    │   └── src/
+    │       ├── agent/        # Agent 核心逻辑（tools/context/engine/token/markdown）
+    │       ├── stores/       # Pinia（agent、pet、settings）
+    │       ├── components/   # AgentChat、SettingsPanel
+    │       ├── composables/  # 交互、窗口、i18n 组合式函数
+    │       ├── i18n/         # zh/en 文案
+    │       ├── pet/          # 宠物渲染（SpriteRenderer）
+    │       └── styles/       # 主题
+    │   └── src-tauri/src/
+    │       ├── llm.rs        # WinHTTP LLM 网关（SSE 流式）
+    │       ├── agent_tools.rs# 工具执行与沙箱限制
+    │       ├── agent_config.rs # 配置持久化、Key 脱敏
+    │       ├── audit.rs      # JSONL 审计日志
+    │       └── commands.rs / tray.rs
     └── site/                 # 官网（Astro）
-        ├── package.json
-        ├── astro.config.mjs
-        ├── tsconfig.json
-        └── src/
-            ├── layouts/Base.astro
-            └── pages/index.astro
 ```
 
 ## 复用功能说明
 
-本项目从 AI 步步（AIbubu）复用以下基础能力：
+以下基础能力复用自 AIbubu：无边框透明窗口（`transparent` + `alwaysOnTop` + `skipTaskbar`）、系统托盘（`tray.rs`）、桌面拖拽（`usePetInteraction`）、精灵图渲染（`public/skins/<name>/skin.json`）、i18n 双语与明暗主题。Agent 对话、工具调用、网关、审计均为本项目独立实现。
 
-- **透明窗口**：通过 Tauri 配置 `transparent: true`、`decorations: false` 实现无边框透明窗口，配合 `alwaysOnTop` 与 `skipTaskbar` 让宠物悬浮于桌面。
-- **系统托盘**：在 `src-tauri/src/tray.rs` 中实现托盘菜单，支持显示/隐藏宠物、退出等操作。
-- **拖拽**：通过 `usePetInteraction` 组合式函数处理宠物在桌面上的拖拽移动。
-- **精灵图渲染**：`PetRenderer` 与 `SpriteRenderer` 配合 `public/skins/<name>/skin.json` 解析精灵图帧并循环播放动画。
-- **i18n**：`i18n/` 目录提供 zh/en 双语文案，通过 `useI18n` 组合式函数在组件中使用。
-- **主题切换**：`styles/theme.css` 定义 CSS 变量，`SettingsPanel` 中可切换明暗主题。
+## Roadmap
+
+分层演进计划见 [AGENT_ROADMAP.md](AGENT_ROADMAP.md)（A：轻量工具化 → B：真实工具与权限 → C：完整 Agent Harness）。
+
+## License
+
+[MIT](LICENSE)
