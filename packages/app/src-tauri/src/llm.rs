@@ -13,7 +13,7 @@ use windows::Win32::Networking::WinHttp::{
 use crate::agent_config::AgentConfig;
 
 /// 推送给前端的流式分片
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChatChunk {
     Delta {
@@ -715,6 +715,113 @@ mod tests {
     fn extract_content_missing() {
         let raw = r#"{"choices":[]}"#;
         assert!(extract_content(raw).is_err());
+    }
+
+    /// 黑盒端到端：起一个本地 HTTP 服务器回放 OpenAI 兼容 SSE，
+    /// 经真实 WinHTTP 网关跑完整 run_chat，只断言对外产出的分片序列
+    #[test]
+    fn run_chat_end_to_end_against_mock_sse_server() {
+        let ev1 = r#"data: {"choices":[{"delta":{"content":"你"},"index":0}]}"#;
+        let ev2 = r#"data: {"choices":[{"delta":{"reasoning_content":"思考"},"index":0}]}"#;
+        let ev3 = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"fs_read","arguments":""}}]},"index":0}]}"#;
+        let ev4 = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"a.txt\"}"}}]},"index":0}]}"#;
+        let ev5 = r#"data: {"choices":[{"finish_reason":"tool_calls","index":0}]}"#;
+        let body = format!("{ev1}\n\n{ev2}\n\n{ev3}\n\n{ev4}\n\n{ev5}\n\ndata: [DONE]\n\n");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<ChatChunk>::new()));
+        let recv = received.clone();
+        let ch = Channel::new(move |chunk| {
+            if let tauri::ipc::InvokeResponseBody::Json(s) = chunk {
+                if let Ok(chunk) = serde_json::from_str::<ChatChunk>(&s) {
+                    recv.lock().unwrap().push(chunk);
+                }
+            }
+            Ok(())
+        });
+
+        let config = AgentConfig {
+            api_key: "test-key".to_string(),
+            base_url: format!("http://127.0.0.1:{port}"),
+            model: "test-model".to_string(),
+            ..Default::default()
+        };
+        let messages = vec![json!({"role": "user", "content": "你好"})];
+
+        run_chat(&config, messages, None, &ch).unwrap();
+
+        let msgs = received.lock().unwrap();
+        assert!(
+            !msgs.iter().any(|c| matches!(c, ChatChunk::Error { .. })),
+            "不应有 Error 分片: {msgs:?}"
+        );
+        assert!(
+            matches!(msgs.first(), Some(ChatChunk::Delta { text }) if text == "你"),
+            "首个分片应为 Delta: {msgs:?}"
+        );
+        assert!(msgs.iter().any(|c| matches!(c, ChatChunk::Reasoning { .. })));
+        let finish = msgs
+            .iter()
+            .find_map(|c| match c {
+                ChatChunk::Finish { reason, tool_calls } => Some((reason.as_str(), tool_calls.clone())),
+                _ => None,
+            })
+            .expect("应收到 Finish 分片");
+        assert_eq!(finish.0, "tool_calls");
+        assert_eq!(finish.1.len(), 1, "跨分片的 tool_calls 应合并为一个: {:?}", finish.1);
+        assert_eq!(finish.1[0]["id"], "call_1");
+        assert_eq!(finish.1[0]["function"]["name"], "fs_read");
+        assert_eq!(finish.1[0]["function"]["arguments"], "{\"path\":\"a.txt\"}");
+    }
+
+    /// 黑盒：HTTP 401 应映射为 auth 错误并透出服务端 message
+    #[test]
+    fn run_chat_maps_http_error_status() {
+        let body = r#"{"error":{"message":"bad key"}}"#;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let response = format!(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let config = AgentConfig {
+            api_key: "wrong".to_string(),
+            base_url: format!("http://127.0.0.1:{port}"),
+            model: "test-model".to_string(),
+            ..Default::default()
+        };
+        let ch = channel();
+        let err = run_chat(&config, vec![json!({"role": "user", "content": "hi"})], None, &ch)
+            .expect_err("401 应返回 GatewayError");
+        assert_eq!(err.code, "auth");
+        assert!(err.message.contains("bad key"));
     }
 
     #[test]

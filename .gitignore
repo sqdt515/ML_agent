@@ -39,3 +39,6 @@ packages/app/src-tauri/gen/schemas/
 .tmp/
 .local/
 .appdata/
+
+# Coverage report
+coverage/

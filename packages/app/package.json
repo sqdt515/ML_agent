@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10",
@@ -19,6 +21,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.10",
     "@vitejs/plugin-vue": "^5",
+    "@vitest/coverage-v8": "^4.1.11",
     "happy-dom": "^20.11.12",
     "typescript": "^5.7",
     "vite": "^6",
