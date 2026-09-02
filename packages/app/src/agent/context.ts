@@ -1,5 +1,5 @@
 import type { ChatMessage, AgentPlan } from './types'
-import { estimateTokens } from './token'
+import { messageTokens } from './token'
 
 export interface BuildContextResult {
   /** 进入上下文的非 system 消息（从最新向前保留，预算内） */
@@ -43,7 +43,7 @@ export function buildContext(messages: ChatMessage[], budget: number): BuildCont
 
   for (let i = history.length - 1; i >= 0; i--) {
     const msg = history[i]
-    const cost = estimateTokens(msg.content)
+    const cost = messageTokens(msg)
     if (total + cost > budget && kept.length > 0) {
       dropped += 1
       droppedMsgs.push(msg)
