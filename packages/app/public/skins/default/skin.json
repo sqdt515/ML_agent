@@ -1,7 +1,7 @@
 {
   "id": "default",
   "name": "Default Pet",
-  "author": "New AI",
+  "author": "魔龙agent",
   "format": "sprite",
   "size": { "width": 48, "height": 48 },
   "animations": {

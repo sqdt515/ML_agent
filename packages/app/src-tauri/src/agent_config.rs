@@ -10,7 +10,7 @@ const MIN_BUDGET: u32 = 4000;
 const MAX_BUDGET: u32 = 60000;
 const DEFAULT_MAX_AGENT_ROUNDS: u32 = 20;
 
-const DEFAULT_SYSTEM_PROMPT: &str = "你是 New AI，一个运行在用户桌面上的智能助手。\
+const DEFAULT_SYSTEM_PROMPT: &str = "你是魔龙agent，一个运行在用户桌面上的智能助手。\
 你的特点是：亲切、简洁、准确。\
 你可以使用提供的工具帮助用户完成操作（如显示/隐藏桌宠、打开链接、查询系统信息、记录便签）。\
 调用工具前请先用一句话说明你要做什么；工具结果返回后，用简洁的语言总结给用户。\

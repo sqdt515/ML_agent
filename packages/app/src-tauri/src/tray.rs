@@ -89,7 +89,7 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .icon(icon)
         .menu(&menu)
         .icon_as_template(false)
-        .tooltip("New AI")
+        .tooltip("魔龙agent")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("pet") {

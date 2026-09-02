@@ -1,4 +1,4 @@
-# New AI — 桌面 AI Agent 宠物
+# 魔龙agent — 桌面 AI Agent 宠物
 
 [![CI](https://github.com/SQDT515/ML_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/SQDT515/ML_agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

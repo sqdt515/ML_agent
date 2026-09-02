@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
-  "productName": "New AI",
+  "productName": "魔龙agent",
   "version": "0.1.0",
   "identifier": "com.new-ai.app",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "pet",
-        "title": "New AI",
+        "title": "魔龙agent",
         "width": 120,
         "height": 120,
         "transparent": true,
@@ -27,7 +27,7 @@
       },
       {
         "label": "social",
-        "title": "New AI 设置",
+        "title": "魔龙agent 设置",
         "width": 360,
         "height": 440,
         "transparent": false,
@@ -41,7 +41,7 @@
       },
             {
         "label": "agent",
-        "title": "New AI Agent",
+        "title": "魔龙agent",
         "width": 420,
         "height": 640,
         "minWidth": 360,

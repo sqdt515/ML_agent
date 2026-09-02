@@ -1,6 +1,6 @@
 // 英文文案字典（结构与 zh.ts 完全一致）
 export const en = {
-  appTitle: 'New AI',
+  appTitle: '魔龙agent',
   showPet: 'Show Pet',
   hidePet: 'Hide Pet',
   exit: 'Close',
@@ -11,8 +11,8 @@ export const en = {
   light: 'Light',
   system: 'System',
   agentSection: 'Agent',
-  agentTitle: 'AI Assistant',
-  agentGreeting: "Hi, I'm your desktop AI assistant",
+  agentTitle: '魔龙agent',
+  agentGreeting: "Hi, I'm 魔龙agent",
   agentGreetingHint: 'Ask me about your system, take notes or open links; double-click the pet to open me.',
   chatPlaceholder: 'Type a message, Enter to send',
   send: 'Send',

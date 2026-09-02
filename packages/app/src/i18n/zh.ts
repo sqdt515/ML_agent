@@ -1,6 +1,6 @@
 // 中文文案字典
 export const zh = {
-  appTitle: 'New AI',
+  appTitle: '魔龙agent',
   showPet: '显示宠物',
   hidePet: '隐藏宠物',
   exit: '关闭',
@@ -11,8 +11,8 @@ export const zh = {
   light: '浅色',
   system: '跟随系统',
   agentSection: 'Agent',
-  agentTitle: 'AI 助手',
-  agentGreeting: '你好，我是你的桌面 AI 助手',
+  agentTitle: '魔龙agent',
+  agentGreeting: '你好，我是魔龙agent',
   agentGreetingHint: '可以问我系统信息、帮我记便签或打开链接；双击桌宠也能打开我。',
   chatPlaceholder: '输入消息，Enter 发送，Shift+Enter 换行',
   send: '发送',

@@ -48,7 +48,7 @@ pub fn run() {
             audit::agent_export_audit_logs,
         ])
         .setup(|app| {
-            println!("New AI started");
+            println!("魔龙agent started");
             tray::setup_tray(app)?;
 
             // 显示式显示 pet 窗口（Tauri 2 在某些环境下 visible:true 不生效）

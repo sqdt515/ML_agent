@@ -402,7 +402,7 @@ pub fn agent_tool_notify(
         }
         app.notification()
             .builder()
-            .title("New AI")
+            .title("魔龙agent")
             .body(&trimmed)
             .show()
             .map_err(|e| format!("发送通知失败: {e}"))?;
