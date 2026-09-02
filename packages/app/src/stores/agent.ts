@@ -85,7 +85,7 @@ export const useAgentStore = defineStore('agent', () => {
       if (!raw) return
       const parsed = JSON.parse(raw) as unknown
       if (!Array.isArray(parsed)) return
-      sessions.value = (parsed as Array<Record<string, unknown>>)
+      let list = (parsed as Array<Record<string, unknown>>)
         .filter((s) => s && typeof s.id === 'string' && Array.isArray(s.messages))
         .map((s) => ({
           id: String(s.id),
@@ -113,6 +113,10 @@ export const useAgentStore = defineStore('agent', () => {
             })),
           plan: parseStoredPlan(s.plan),
         }))
+      // 清理历史残留：无消息的空会话不加载（全部为空时保留，避免无会话可用）
+      const nonEmpty = list.filter((s) => s.messages.length > 0)
+      if (nonEmpty.length > 0) list = nonEmpty
+      sessions.value = list
     } catch {
       /* noop */
     }
@@ -131,13 +135,16 @@ export const useAgentStore = defineStore('agent', () => {
     loadFromStorage()
     if (sessions.value.length === 0) {
       newChat()
-    } else if (!currentId.value) {
+    } else if (!currentId.value || !sessions.value.some((x) => x.id === currentId.value)) {
       currentId.value = sessions.value[0].id
     }
     await reloadConfig()
   }
 
   function newChat(): void {
+    // 当前会话尚无任何内容时直接复用，避免下拉列表堆积空会话
+    const cur = current.value
+    if (cur && cur.messages.length === 0 && !cur.plan) return
     const s: ChatSession = {
       id: genId('s'),
       title: '新对话',
@@ -154,10 +161,8 @@ export const useAgentStore = defineStore('agent', () => {
   function clearChat(): void {
     const s = current.value
     if (!s) return
-    s.messages = []
-    s.title = '新对话'
-    s.updatedAt = now()
-    persist()
+    // 清空 = 移除该会话，并切换到其余会话（没有则新建）
+    removeSession(s.id)
   }
 
   function switchSession(id: string): void {
