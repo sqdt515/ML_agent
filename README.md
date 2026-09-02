@@ -59,7 +59,7 @@ flowchart LR
 
 ## 快速开始
 
-前置条件：Node.js 22+、pnpm 10+、Rust stable（Tauri 原生依赖见 [Tauri Prerequisites](https://tauri.app/start/prerequisites/)），Windows 10/11。
+前置条件：Node.js 22+、pnpm 10+（若命令不存在，先执行一次 `corepack enable` 或 `npm i -g pnpm`）、Rust stable（Tauri 原生依赖见 [Tauri Prerequisites](https://tauri.app/start/prerequisites/)），Windows 10/11。
 
 ```bash
 # 安装依赖

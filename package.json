@@ -6,7 +6,9 @@
     "dev": "pnpm --filter new-ai-app dev",
     "tauri": "pnpm --filter new-ai-app tauri",
     "dev:site": "pnpm --filter new-ai-site dev",
-    "build:site": "pnpm --filter new-ai-site build"
+    "build:site": "pnpm --filter new-ai-site build",
+    "test": "pnpm --filter new-ai-app test",
+    "typecheck": "pnpm --filter new-ai-app exec vue-tsc --noEmit"
   },
   "devDependencies": {
     "prettier": "^3.8.1"
