@@ -236,6 +236,9 @@ fn save_notes(app: &AppHandle, notes: &[Note]) -> Result<(), String> {
     std::fs::write(&path, raw).map_err(|e| format!("写入便签失败: {e}"))
 }
 
+/// 便签序号：避免同一秒内创建的多条便签 ID 碰撞
+static NOTE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[tauri::command]
 pub fn agent_tool_note_create(app: AppHandle, text: String) -> Result<String, String> {
     let trimmed = text.trim().to_string();
@@ -243,8 +246,9 @@ pub fn agent_tool_note_create(app: AppHandle, text: String) -> Result<String, St
         return Err("便签内容不能为空".to_string());
     }
     let mut notes = load_notes(&app);
+    let seq = NOTE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     notes.push(Note {
-        id: format!("n_{}", now_secs()),
+        id: format!("n_{}_{seq}", now_secs()),
         text: trimmed,
         created_at: now_secs(),
     });
