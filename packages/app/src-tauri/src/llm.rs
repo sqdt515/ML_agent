@@ -79,7 +79,7 @@ fn encode_w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-struct HandleGuard(*mut core::ffi::c_void);
+pub(crate) struct HandleGuard(pub(crate) *mut core::ffi::c_void);
 impl Drop for HandleGuard {
     fn drop(&mut self) {
         unsafe {

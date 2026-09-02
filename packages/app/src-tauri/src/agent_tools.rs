@@ -651,43 +651,41 @@ fn tavily_post(body_json: &str) -> Result<String, String> {
     const PORT: u16 = 443;
     const PATH: &str = "/search";
     unsafe {
-        let session = WinHttpOpen(
+        // RAII 守住三类句柄：任何错误路径提前返回时自动关闭（复用 llm.rs 的 HandleGuard）
+        let session = crate::llm::HandleGuard(WinHttpOpen(
             PCWSTR::null(),
             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
             PCWSTR::null(),
             PCWSTR::null(),
             0,
-        );
-        if session.is_null() {
+        ));
+        if session.0.is_null() {
             return Err("WinHttpOpen 失败".to_string());
         }
         let server = encode_w(HOST);
-        let connect = WinHttpConnect(session, PCWSTR(server.as_ptr()), PORT, 0);
-        if connect.is_null() {
-            let _ = WinHttpCloseHandle(session);
+        let connect = crate::llm::HandleGuard(WinHttpConnect(session.0, PCWSTR(server.as_ptr()), PORT, 0));
+        if connect.0.is_null() {
             return Err("WinHttpConnect 失败".to_string());
         }
         let verb = encode_w("POST");
         let object = encode_w(PATH);
-        let request = WinHttpOpenRequest(
-            connect,
+        let request = crate::llm::HandleGuard(WinHttpOpenRequest(
+            connect.0,
             PCWSTR(verb.as_ptr()),
             PCWSTR(object.as_ptr()),
             PCWSTR::null(),
             PCWSTR::null(),
             std::ptr::null(),
             WINHTTP_FLAG_SECURE,
-        );
-        if request.is_null() {
-            let _ = WinHttpCloseHandle(connect);
-            let _ = WinHttpCloseHandle(session);
+        ));
+        if request.0.is_null() {
             return Err("WinHttpOpenRequest 失败".to_string());
         }
-        let _ = WinHttpSetTimeouts(request, 10000, 10000, 30000, 30000);
+        let _ = WinHttpSetTimeouts(request.0, 10000, 10000, 30000, 30000);
         let headers: Vec<u16> = "Content-Type: application/json".encode_utf16().collect();
         let body = body_json.as_bytes();
         WinHttpSendRequest(
-            request,
+            request.0,
             Some(&headers),
             Some(body.as_ptr() as *const core::ffi::c_void),
             body.len() as u32,
@@ -695,14 +693,14 @@ fn tavily_post(body_json: &str) -> Result<String, String> {
             0,
         )
         .map_err(|e| format!("发送请求失败: {e}"))?;
-        WinHttpReceiveResponse(request, std::ptr::null_mut())
+        WinHttpReceiveResponse(request.0, std::ptr::null_mut())
             .map_err(|e| format!("接收响应失败: {e}"))?;
 
         let mut status: u32 = 0;
         let mut status_len: u32 = std::mem::size_of::<u32>() as u32;
         let mut index: u32 = 0;
         WinHttpQueryHeaders(
-            request,
+            request.0,
             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             PCWSTR::null(),
             Some(&mut status as *mut u32 as *mut core::ffi::c_void),
@@ -714,13 +712,13 @@ fn tavily_post(body_json: &str) -> Result<String, String> {
         let mut out = String::new();
         loop {
             let mut available: u32 = 0;
-            if WinHttpQueryDataAvailable(request, &mut available).is_err() || available == 0 {
+            if WinHttpQueryDataAvailable(request.0, &mut available).is_err() || available == 0 {
                 break;
             }
             let mut buf = vec![0u8; available as usize];
             let mut read: u32 = 0;
             if WinHttpReadData(
-                request,
+                request.0,
                 buf.as_mut_ptr() as *mut core::ffi::c_void,
                 buf.len() as u32,
                 &mut read,
@@ -733,10 +731,6 @@ fn tavily_post(body_json: &str) -> Result<String, String> {
             buf.truncate(read as usize);
             out.push_str(&String::from_utf8_lossy(&buf));
         }
-
-        let _ = WinHttpCloseHandle(request);
-        let _ = WinHttpCloseHandle(connect);
-        let _ = WinHttpCloseHandle(session);
 
         if status >= 400 {
             return Err(format!("HTTP {status}: {}", truncate_chars(&out, 300)));
