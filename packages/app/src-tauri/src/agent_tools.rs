@@ -3,12 +3,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::WIN32_ERROR;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WIN32_ERROR};
 use windows::Win32::Networking::WinHttp::{
-    WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
+    WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
     WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
     WinHttpSetTimeouts, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_FLAG_SECURE,
     WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
+};
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
@@ -561,7 +566,37 @@ pub fn agent_tool_fs_delete(
 
 // === 命令执行（高危：不做命令白名单，仅超时与输出截断防护） ===
 
-#[tauri::command]
+/// RAII 持有 Job Object 句柄；KILL_ON_JOB_CLOSE 下关闭句柄即终止作业内全部进程
+struct JobGuard(HANDLE);
+impl Drop for JobGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+/// 创建 KILL_ON_JOB_CLOSE 作业并装入子进程：之后子进程派生的孙进程自动继承，
+/// 超时、提前返回乃至应用崩溃时关闭句柄都会整树终止
+fn create_tree_job(child: &std::process::Child) -> Result<JobGuard, String> {
+    use std::os::windows::io::AsRawHandle;
+    unsafe {
+        let job = CreateJobObjectW(None, None).map_err(|e| format!("CreateJobObjectW: {e}"))?;
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+        .map_err(|e| format!("SetInformationJobObject: {e}"))?;
+        AssignProcessToJobObject(job, HANDLE(child.as_raw_handle()))
+            .map_err(|e| format!("AssignProcessToJobObject: {e}"))?;
+        Ok(JobGuard(job))
+    }
+}
+
 fn exec_impl(cmd: &str) -> Result<String, String> {
     let trimmed = cmd.trim().to_string();
     if trimmed.is_empty() {
@@ -574,22 +609,18 @@ fn exec_impl(cmd: &str) -> Result<String, String> {
         .spawn()
         .map_err(|e| format!("启动命令失败: {e}"))?;
 
+    let job = create_tree_job(&child).map_err(|e| format!("初始化作业对象失败: {e}"))?;
+
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {
                 if std::time::Instant::now() > deadline {
-                    let pid = child.id();
-                    // /T 杀整棵进程树（cmd + 子进程），/F 强制，确保管道写端全部关闭
-                    // fire-and-forget：受限环境下 taskkill 自身可能卡住，不等待其返回
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/PID", &pid.to_string(), "/T", "/F"])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn();
-                    // 兜底：直接 kill 主进程，确保 wait 不会无限阻塞
-                    let _ = child.kill();
+                    // 原子终止整棵进程树（cmd + 全部后代）；作业句柄随 JobGuard 关闭兜底
+                    unsafe {
+                        let _ = TerminateJobObject(job.0, 1);
+                    }
                     let _ = child.wait();
                     return Err("命令执行超时（30 秒），已终止".to_string());
                 }
