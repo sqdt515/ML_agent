@@ -266,8 +266,7 @@ pub fn agent_tool_note_list(app: AppHandle) -> Result<String, String> {
 
 // === 文件系统（只读，低危） ===
 
-#[tauri::command]
-pub fn agent_tool_fs_list(dir: String) -> Result<String, String> {
+fn fs_list_impl(dir: &str) -> Result<String, String> {
     let path = std::path::Path::new(dir.trim());
     if path.as_os_str().is_empty() {
         return Err("目录不能为空".to_string());
@@ -302,6 +301,24 @@ pub fn agent_tool_fs_list(dir: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn agent_tool_fs_list(
+    app: AppHandle,
+    dir: String,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
+) -> Result<String, String> {
+    let result = fs_list_impl(&dir);
+    audit_result(
+        &app,
+        "fs_list",
+        session_id,
+        user_confirm,
+        serde_json::json!({ "dir": dir }),
+        &result,
+    );
+    result
+}
+
 /// 解析读取路径：绝对路径原样返回，相对路径解析到工作目录（与 fs_write/fs_delete 一致，不做沙箱限制）
 fn resolve_read_path(ws: &std::path::Path, input: &str) -> std::path::PathBuf {
     let p = std::path::Path::new(input.trim());
@@ -339,13 +356,29 @@ fn read_text_file(p: &std::path::Path, display_path: &str) -> Result<String, Str
 }
 
 #[tauri::command]
-pub fn agent_tool_fs_read(app: AppHandle, path: String) -> Result<String, String> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err("路径不能为空".to_string());
-    }
-    let resolved = resolve_read_path(&workspace_dir(&app), trimmed);
-    read_text_file(&resolved, &resolved.to_string_lossy())
+pub fn agent_tool_fs_read(
+    app: AppHandle,
+    path: String,
+    session_id: Option<String>,
+    user_confirm: Option<bool>,
+) -> Result<String, String> {
+    let result = (|| -> Result<String, String> {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err("路径不能为空".to_string());
+        }
+        let resolved = resolve_read_path(&workspace_dir(&app), trimmed);
+        read_text_file(&resolved, &resolved.to_string_lossy())
+    })();
+    audit_result(
+        &app,
+        "fs_read",
+        session_id,
+        user_confirm,
+        serde_json::json!({ "path": path }),
+        &result,
+    );
+    result
 }
 
 // === 系统通知 ===
@@ -807,7 +840,7 @@ mod tests {
         std::fs::write(base.join("b.txt"), "bbb").unwrap();
         std::fs::write(base.join("a.txt"), "aaa").unwrap();
 
-        let res = agent_tool_fs_list(base.to_string_lossy().to_string()).unwrap();
+        let res = fs_list_impl(&base.to_string_lossy()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&res).unwrap();
         assert_eq!(v["ok"], true);
         let items = v["items"].as_array().unwrap();
@@ -825,12 +858,12 @@ mod tests {
 
     #[test]
     fn fs_list_empty_dir_errors() {
-        assert!(agent_tool_fs_list("   ".to_string()).is_err());
+        assert!(fs_list_impl("   ").is_err());
     }
 
     #[test]
     fn fs_list_nonexistent_dir_errors() {
-        assert!(agent_tool_fs_list("Z:/nonexistent_xyz_12345".to_string()).is_err());
+        assert!(fs_list_impl("Z:/nonexistent_xyz_12345").is_err());
     }
 
     #[test]
@@ -839,7 +872,7 @@ mod tests {
         for i in 0..205 {
             std::fs::write(base.join(format!("f{i:03}.txt")), "x").unwrap();
         }
-        let res = agent_tool_fs_list(base.to_string_lossy().to_string()).unwrap();
+        let res = fs_list_impl(&base.to_string_lossy()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&res).unwrap();
         assert_eq!(v["count"], 205);
         assert_eq!(v["items"].as_array().unwrap().len(), 200);

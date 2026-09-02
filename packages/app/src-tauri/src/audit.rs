@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 const MAX_LOG_SIZE: u64 = 1_000_000; // 超过 1MB 轮转归档
-const MAX_PARAMS_CHARS: usize = 50; // 敏感参数截断
+const MAX_PARAMS_CHARS: usize = 120; // 敏感参数截断（需容纳常见文件路径）
 const MAX_RESULT_CHARS: usize = 200;
 
 /// 一条审计记录（JSON Lines，每行一条）

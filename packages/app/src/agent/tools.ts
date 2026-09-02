@@ -72,13 +72,15 @@ export function isMetaTool(name: string): boolean {
   return metaTools.some((t) => t.name === name)
 }
 
-/** 需要审计的高危工具命令（写入 audit.log） */
+/** 需要审计的工具命令（写入 audit.log）：写类高危操作 + 全部文件系统读取 */
 const AUDITED_CMDS = new Set([
   'agent_tool_exec',
   'agent_tool_fs_write',
   'agent_tool_fs_delete',
   'agent_tool_clipboard_write',
   'agent_tool_notify',
+  'agent_tool_fs_read',
+  'agent_tool_fs_list',
 ])
 
 /** 审计上下文（由 store 在每轮工具执行前设置） */
