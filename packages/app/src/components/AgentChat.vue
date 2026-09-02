@@ -697,6 +697,7 @@ function exitApp(): void {
   border-radius: 8px;
   padding: 10px;
   overflow-x: auto;
+  white-space: pre;
   font-family: Consolas, 'Courier New', monospace;
   font-size: 12px;
   line-height: 1.5;
