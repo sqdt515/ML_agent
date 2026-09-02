@@ -1,6 +1,6 @@
 # New AI — 桌面 AI Agent 宠物
 
-[![CI](https://github.com/YOUR_GITHUB_USERNAME/new-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/new-ai/actions/workflows/ci.yml)
+[![CI](https://github.com/SQDT515/ML_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/SQDT515/ML_agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 基于 **Tauri 2（Rust + Vue 3）** 的桌面宠物形态 AI Agent：双击桌宠唤起对话窗口，接入 DeepSeek 等 OpenAI 兼容接口，支持 SSE 流式对话、工具调用、计划式自主执行与审计日志。基础桌面壳复用自开源项目 [AIbubu（AI 步步）](https://github.com/funAgent/ai-bubu)，Agent 能力为独立实现。
@@ -81,7 +81,7 @@ cd packages/app/src-tauri && cargo test   # Rust
 ## 项目结构
 
 ```
-new_ai/
+ML_agent/
 ├── scripts/                  # 回归脚本
 └── packages/
     ├── app/                  # 桌面应用
