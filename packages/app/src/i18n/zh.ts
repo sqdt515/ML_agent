@@ -21,6 +21,7 @@ export const zh = {
   clear: '清空',
   generating: '思考中…',
   zoom: '缩放',
+  minimize: '最小化',
   hide: '隐藏',
   apiKey: 'API Key',
   baseUrl: '接口地址',

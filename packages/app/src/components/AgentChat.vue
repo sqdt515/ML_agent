@@ -70,12 +70,12 @@ function onChangeModel(e: Event): void {
   agent.setSessionModel(target.value)
 }
 
-function toggleZoom(): void {
-  if (isTauri) void getCurrentWindow().toggleMaximize()
+function minimize(): void {
+  if (isTauri) void getCurrentWindow().minimize()
 }
 
-function hideWindow(): void {
-  if (isTauri) void getCurrentWindow().hide()
+function toggleZoom(): void {
+  if (isTauri) void getCurrentWindow().toggleMaximize()
 }
 
 function exitApp(): void {
@@ -92,9 +92,9 @@ function exitApp(): void {
         <span v-else-if="agent.toolStatus" class="status">{{ agent.toolStatus }}</span>
       </div>
       <div class="titlebar-actions">
-        <button class="win-btn" :title="t('hide')" @click="hideWindow">
+        <button class="win-btn" :title="t('minimize')" @click="minimize">
           <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
-            <line x1="2" y1="9" x2="10" y2="9" stroke="currentColor" stroke-width="1.4" />
+            <line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.4" />
           </svg>
         </button>
         <button class="win-btn" :title="t('zoom')" @click="toggleZoom">

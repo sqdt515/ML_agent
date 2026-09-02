@@ -21,6 +21,7 @@ export const en = {
   clear: 'Clear',
   generating: 'Thinking…',
   zoom: 'Zoom',
+  minimize: 'Minimize',
   hide: 'Hide',
   apiKey: 'API Key',
   baseUrl: 'Base URL',
