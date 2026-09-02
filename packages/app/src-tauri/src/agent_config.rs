@@ -147,11 +147,20 @@ pub struct AgentConfigInput {
 }
 
 fn last4(s: &str) -> String {
-    if s.len() >= 4 {
-        s[s.len() - 4..].to_string()
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() >= 4 {
+        chars[chars.len() - 4..].iter().collect()
     } else {
         String::new()
     }
+}
+
+/// 密钥类输入校验：仅允许 ASCII（误粘贴中文/全角字符会导致 Key 不可用）
+fn validate_key(field: &str, key: &str) -> Result<(), String> {
+    if !key.chars().all(|c| c.is_ascii()) {
+        return Err(format!("{field} 含非 ASCII 字符，请检查是否误复制了多余内容"));
+    }
+    Ok(())
 }
 
 pub fn view(config: &AgentConfig) -> AgentConfigView {
@@ -180,6 +189,7 @@ pub fn apply(app: &AppHandle, input: AgentConfigInput) -> Result<AgentConfigView
     if let Some(key) = input.api_key {
         let trimmed = key.trim();
         if !trimmed.is_empty() {
+            validate_key("API Key", trimmed)?;
             config.api_key = trimmed.to_string();
         }
     }
@@ -216,6 +226,7 @@ pub fn apply(app: &AppHandle, input: AgentConfigInput) -> Result<AgentConfigView
     if let Some(key) = input.web_search_key {
         let trimmed = key.trim();
         if !trimmed.is_empty() {
+            validate_key("搜索 Key", trimmed)?;
             config.web_search_key = trimmed.to_string();
         }
     }
@@ -342,5 +353,26 @@ mod tests {
         assert_eq!(v.tool_flags.get("exec"), Some(&false));
         assert_eq!(v.tool_flags.get("fs_read"), Some(&true));
         assert_eq!(v.tool_flags.get("web_search"), Some(&true));
+    }
+
+    #[test]
+    fn last4_ascii_key() {
+        assert_eq!(last4("sk-abcdef123456"), "3456");
+        assert_eq!(last4("abc"), "");
+        assert_eq!(last4(""), "");
+    }
+
+    #[test]
+    fn last4_multibyte_does_not_panic() {
+        // 字节切片版本在多字节边界会 panic，字符版本应正常返回尾 4 字符
+        let s = "sk-密钥误粘贴";
+        assert_eq!(last4(s).chars().count(), 4);
+    }
+
+    #[test]
+    fn validate_key_rejects_non_ascii() {
+        assert!(validate_key("API Key", "sk-abc123").is_ok());
+        assert!(validate_key("API Key", "sk-abc123密").is_err());
+        assert!(validate_key("搜索 Key", "").is_ok());
     }
 }
